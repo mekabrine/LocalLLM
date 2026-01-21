@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="24000" systemVersion="24A335" minimumToolsVersion="Automatic" sourceLanguage="Swift" userDefinedModelVersionIdentifier="">
+    <entity name="ChatEntity" representedClassName="ChatEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="title" optional="YES" attributeType="String"/>
+        <attribute name="createdAt" optional="NO" attributeType="Date"/>
+        <attribute name="updatedAt" optional="NO" attributeType="Date"/>
+        <relationship name="messages" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="MessageEntity" inverseName="chat" inverseEntity="MessageEntity" ordered="YES"/>
+        <relationship name="model" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="ModelReferenceEntity" inverseName="chats" inverseEntity="ModelReferenceEntity"/>
+    </entity>
+    <entity name="MessageEntity" representedClassName="MessageEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="role" optional="NO" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="text" optional="NO" attributeType="String"/>
+        <attribute name="createdAt" optional="NO" attributeType="Date"/>
+        <attribute name="editedAt" optional="YES" attributeType="Date"/>
+        <attribute name="isOutdated" optional="NO" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <relationship name="chat" optional="NO" maxCount="1" deletionRule="Nullify" destinationEntity="ChatEntity" inverseName="messages" inverseEntity="ChatEntity"/>
+    </entity>
+    <entity name="ModelReferenceEntity" representedClassName="ModelReferenceEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="displayName" optional="NO" attributeType="String"/>
+        <attribute name="originalPath" optional="YES" attributeType="String"/>
+        <attribute name="fileSize" optional="NO" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="bookmark" optional="NO" attributeType="Binary" allowsExternalBinaryDataStorage="YES"/>
+        <attribute name="createdAt" optional="NO" attributeType="Date"/>
+        <relationship name="chats" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="ChatEntity" inverseName="model" inverseEntity="ChatEntity"/>
+    </entity>
+</model>
