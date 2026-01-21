@@ -15,29 +15,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16.4
+      - name: Select an installed Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.4.app
+          set -euo pipefail
+          echo "Installed Xcodes:"
+          ls -1 /Applications | grep -E '^Xcode.*\.app$' || true
+
+          if [ -d "/Applications/Xcode.app" ]; then
+            sudo xcode-select -s "/Applications/Xcode.app"
+          else
+            XCODE_APP="$(ls -d /Applications/Xcode*.app | head -n 1)"
+            sudo xcode-select -s "$XCODE_APP"
+          fi
+
+          xcode-select -p
           xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      # OPTIONAL: force a consistent deployment target in CI without you editing anything locally.
-      # (Your dependency currently requires iOS 18 in CI.)
+      # CI-only patch (only if your repo uses XcodeGen and you want CI to force a target)
       - name: Patch Project.yml deployment target (CI only)
         run: |
           set -euo pipefail
           if [ -f "project.yml" ]; then
-            # Replace common "15.0" occurrences for deployment target with "18.0"
-            # Safe if you later change it back in repo; this only affects CI workspace.
             /usr/bin/perl -0777 -i -pe 's/(deploymentTarget:\s*")15\.0(")/${1}18.0${2}/g; s/(IPHONEOS_DEPLOYMENT_TARGET\s*:\s*)15\.0/\${1}18.0/g' project.yml || true
           fi
 
       - name: Generate Xcode project (overwrite)
         run: |
           set -euo pipefail
-          # Ensure we don't accidentally use a stale committed .xcodeproj
           rm -rf LocalGGUFChat.xcodeproj LocalGGUFChat.xcworkspace
           xcodegen generate
 
@@ -61,7 +68,7 @@ jobs:
           APP_PATH="DerivedData/Build/Products/Release-iphonesimulator/LocalGGUFChat.app"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "LocalGGUFChat-Simulator.app.zip"
 
-      - name: Archive (Device, unsigned) + make IPA
+      - name: Archive (Device, unsigned) + make IPA shell
         run: |
           set -euo pipefail
           rm -rf build Payload LocalGGUFChat-unsigned.ipa
