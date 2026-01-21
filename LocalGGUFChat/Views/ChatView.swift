@@ -1,6 +1,7 @@
 
 import SwiftUI
 import CoreData
+import UIKit
 
 struct ChatView: View {
     @Environment(\.managedObjectContext) private var moc
