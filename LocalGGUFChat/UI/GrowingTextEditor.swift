@@ -2,6 +2,13 @@
 import SwiftUI
 import UIKit
 
+final class GrowingTextView: UITextView {
+    override var intrinsicContentSize: CGSize {
+        let size = sizeThatFits(CGSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude))
+        return CGSize(width: UIView.noIntrinsicMetric, height: size.height)
+    }
+}
+
 struct GrowingTextEditor: UIViewRepresentable {
     @Binding var text: String
     var minHeight: CGFloat = 40
@@ -33,7 +40,7 @@ struct GrowingTextEditor: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+        let tv = GrowingTextView()
         tv.text = text
         tv.font = UIFont.preferredFont(forTextStyle: .body)
         tv.backgroundColor = .clear
@@ -51,12 +58,5 @@ struct GrowingTextEditor: UIViewRepresentable {
     func updateUIView(_ uiView: UITextView, context: Context) {
         if uiView.text != text { uiView.text = text }
         uiView.isEditable = isEditable
-    }
-}
-
-extension UITextView {
-    open override var intrinsicContentSize: CGSize {
-        let size = sizeThatFits(CGSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude))
-        return CGSize(width: UIView.noIntrinsicMetric, height: size.height)
     }
 }
