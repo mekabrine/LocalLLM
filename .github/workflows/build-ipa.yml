@@ -9,32 +9,26 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select an installed Xcode
+      # IMPORTANT: pick Xcode 16 so the project format + Swift toolchain match
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "16.4"
+
+      - name: Xcode version
         run: |
-          set -euo pipefail
-          echo "Installed Xcodes:"
-          ls -1 /Applications | grep -E '^Xcode.*\.app$' || true
-
-          if [ -d "/Applications/Xcode.app" ]; then
-            sudo xcode-select -s "/Applications/Xcode.app"
-          else
-            XCODE_APP="$(ls -d /Applications/Xcode*.app | head -n 1)"
-            sudo xcode-select -s "$XCODE_APP"
-          fi
-
-          xcode-select -p
           xcodebuild -version
+          xcode-select -p
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      # CI-only patch (only if your repo uses XcodeGen and you want CI to force a target)
       - name: Patch Project.yml deployment target (CI only)
         run: |
           set -euo pipefail
