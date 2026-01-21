@@ -1,94 +1,66 @@
-# .github/workflows/build-unsigned.yml
-name: Build (Unsigned, auto-generate Xcode project)
+name: Build unsigned IPA
 
 on:
   push:
     branches: [ "main" ]
-  pull_request:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # IMPORTANT: pick Xcode 16 so the project format + Swift toolchain match
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: "16.4"
-
-      - name: Xcode version
+      - name: Select latest installed Xcode
+        shell: bash
         run: |
-          xcodebuild -version
-          xcode-select -p
+          set -euo pipefail
+          ls -1 /Applications | grep -E '^Xcode_.*\.app$|^Xcode\.app$' || true
+          XCODE_APP="$(ls -d /Applications/Xcode*.app /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
+          echo "Using: $XCODE_APP"
+          echo "DEVELOPER_DIR=$XCODE_APP/Contents/Developer" >> "$GITHUB_ENV"
+          "$XCODE_APP/Contents/Developer/usr/bin/xcodebuild" -version
 
-      - name: Install XcodeGen
+      - name: Install XcodeGen (to regenerate .xcodeproj)
         run: brew install xcodegen
 
-      - name: Patch Project.yml deployment target (CI only)
-        run: |
-          set -euo pipefail
-          if [ -f "project.yml" ]; then
-            /usr/bin/perl -0777 -i -pe 's/(deploymentTarget:\s*")15\.0(")/${1}18.0${2}/g; s/(IPHONEOS_DEPLOYMENT_TARGET\s*:\s*)15\.0/\${1}18.0/g' project.yml || true
-          fi
+      - name: Generate Xcode project
+        run: xcodegen generate
 
-      - name: Generate Xcode project (overwrite)
-        run: |
-          set -euo pipefail
-          rm -rf LocalGGUFChat.xcodeproj LocalGGUFChat.xcworkspace
-          xcodegen generate
-
-      - name: Resolve Swift packages
+      - name: Resolve Swift Packages
         run: |
           set -euo pipefail
           xcodebuild -resolvePackageDependencies -project LocalGGUFChat.xcodeproj
 
-      - name: Build (Simulator, Release)
+      - name: Build (iphoneos) with code signing disabled
         run: |
           set -euo pipefail
-          xcodebuild \
-            -project LocalGGUFChat.xcodeproj \
-            -scheme LocalGGUFChat \
-            -configuration Release \
-            -destination "generic/platform=iOS Simulator" \
-            -derivedDataPath DerivedData \
-            IPHONEOS_DEPLOYMENT_TARGET=18.0 \
-            build
-
-          APP_PATH="DerivedData/Build/Products/Release-iphonesimulator/LocalGGUFChat.app"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "LocalGGUFChat-Simulator.app.zip"
-
-      - name: Archive (Device, unsigned) + make IPA shell
-        run: |
-          set -euo pipefail
-          rm -rf build Payload LocalGGUFChat-unsigned.ipa
-          mkdir -p build
-
           xcodebuild \
             -project LocalGGUFChat.xcodeproj \
             -scheme LocalGGUFChat \
             -configuration Release \
             -destination "generic/platform=iOS" \
-            -archivePath "build/LocalGGUFChat.xcarchive" \
+            -derivedDataPath DerivedData \
             IPHONEOS_DEPLOYMENT_TARGET=18.0 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            archive
+            build
 
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="DerivedData/Build/Products/Release-iphoneos/LocalGGUFChat.app"
+          test -d "$APP_PATH"
+          rm -rf Payload LocalGGUFChat-unsigned.ipa
           mkdir -p Payload
-          cp -R "build/LocalGGUFChat.xcarchive/Products/Applications/LocalGGUFChat.app" Payload/
-          /usr/bin/zip -r "LocalGGUFChat-unsigned.ipa" Payload
+          cp -R "$APP_PATH" Payload/
+          /usr/bin/zip -r LocalGGUFChat-unsigned.ipa Payload
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LocalGGUFChat-builds
-          path: |
-            LocalGGUFChat-Simulator.app.zip
-            LocalGGUFChat-unsigned.ipa
-            build/LocalGGUFChat.xcarchive
+          name: LocalGGUFChat-unsigned-ipa
+          path: LocalGGUFChat-unsigned.ipa
