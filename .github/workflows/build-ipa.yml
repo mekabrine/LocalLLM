@@ -2,11 +2,13 @@ name: iOS Build
 
 on:
   push:
+    branches: ["**"]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
 
     steps:
       - name: Checkout
@@ -16,19 +18,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ -d "/Applications/Xcode_16.4.app/Contents/Developer" ]; then
+          if [ -d "/Applications/Xcode_16.4.app" ]; then
+            echo "Using Xcode_16.4.app"
             sudo xcode-select -s "/Applications/Xcode_16.4.app/Contents/Developer"
-          elif ls /Applications/Xcode*.app >/dev/null 2>&1; then
-            XCODE_APP="$(ls -1d /Applications/Xcode*.app | head -n 1)"
-            sudo xcode-select -s "${XCODE_APP}/Contents/Developer"
           else
-            echo "No Xcode found in /Applications"
-            exit 1
+            echo "Xcode_16.4.app not found. Using current default:"
+            xcode-select -p
           fi
-
           xcodebuild -version
-          xcode-select -p
 
       - name: Install XcodeGen
         shell: bash
@@ -41,46 +38,44 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # If you have project.yml at repo root, this will generate LocalGGUFChat.xcodeproj there.
+          xcodegen generate
+          ls -la
 
-          # Always generate so CI is deterministic
-          rm -rf LocalGGUFChat.xcodeproj
-          xcodegen generate --spec Project.yml
-
-          test -d LocalGGUFChat.xcodeproj
+      - name: Verify project exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "LocalGGUFChat.xcodeproj"
+          echo "Found LocalGGUFChat.xcodeproj"
 
       - name: Resolve packages
         shell: bash
         run: |
           set -euo pipefail
-          xcodebuild -resolvePackageDependencies -project LocalGGUFChat.xcodeproj
+          xcodebuild \
+            -project "LocalGGUFChat.xcodeproj" \
+            -scheme "LocalGGUFChat" \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "DerivedData" \
+            IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            -resolvePackageDependencies
 
       - name: Build (iOS Simulator)
         shell: bash
         run: |
           set -euo pipefail
-
           xcodebuild \
-            -project LocalGGUFChat.xcodeproj \
-            -scheme LocalGGUFChat \
+            -project "LocalGGUFChat.xcodeproj" \
+            -scheme "LocalGGUFChat" \
             -configuration Release \
             -destination "generic/platform=iOS Simulator" \
-            -derivedDataPath DerivedData \
+            -derivedDataPath "DerivedData" \
             IPHONEOS_DEPLOYMENT_TARGET=18.0 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
-
-      - name: Zip .app (Simulator)
-        shell: bash
-        run: |
-          set -euo pipefail
-          APP_PATH="DerivedData/Build/Products/Release-iphonesimulator/LocalGGUFChat.app"
-          test -d "$APP_PATH"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "LocalGGUFChat-Simulator.app.zip"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: LocalGGUFChat-Simulator
-          path: LocalGGUFChat-Simulator.app.zip
