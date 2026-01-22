@@ -7,6 +7,8 @@ options:
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.example.LocalGGUFChat
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
 
 packages:
@@ -18,9 +20,13 @@ targets:
   LocalGGUFChat:
     type: application
     platform: iOS
+    info:
+      path: LocalGGUFChat/Resources/Info.plist
     sources:
       - path: LocalGGUFChat
     resources:
       - path: LocalGGUFChat/Resources
+        excludes:
+          - Info.plist
     dependencies:
       - package: SwiftLlama
