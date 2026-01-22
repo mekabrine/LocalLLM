@@ -17,10 +17,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Prefer Xcode 16.4 if present (matches your earlier successful logs).
           if [ -d "/Applications/Xcode_16.4.app/Contents/Developer" ]; then
             sudo xcode-select -s "/Applications/Xcode_16.4.app/Contents/Developer"
-          # Fall back to whatever Xcode is installed under /Applications
           elif ls /Applications/Xcode*.app >/dev/null 2>&1; then
             XCODE_APP="$(ls -1d /Applications/Xcode*.app | head -n 1)"
             sudo xcode-select -s "${XCODE_APP}/Contents/Developer"
@@ -32,13 +30,31 @@ jobs:
           xcodebuild -version
           xcode-select -p
 
+      - name: Install XcodeGen
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew update
+          brew install xcodegen
+
+      - name: Generate Xcode project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Always generate so CI is deterministic
+          rm -rf LocalGGUFChat.xcodeproj
+          xcodegen generate --spec Project.yml
+
+          test -d LocalGGUFChat.xcodeproj
+
       - name: Resolve packages
         shell: bash
         run: |
           set -euo pipefail
           xcodebuild -resolvePackageDependencies -project LocalGGUFChat.xcodeproj
 
-      - name: Build (iOS Simulator, iOS 18 deployment)
+      - name: Build (iOS Simulator)
         shell: bash
         run: |
           set -euo pipefail
@@ -60,10 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           APP_PATH="DerivedData/Build/Products/Release-iphonesimulator/LocalGGUFChat.app"
-          if [ ! -d "$APP_PATH" ]; then
-            echo "App not found at $APP_PATH"
-            exit 1
-          fi
+          test -d "$APP_PATH"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "LocalGGUFChat-Simulator.app.zip"
 
       - name: Upload artifact
