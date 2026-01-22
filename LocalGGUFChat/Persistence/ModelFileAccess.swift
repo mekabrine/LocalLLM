@@ -1,106 +1,68 @@
 import Foundation
 
-/// iOS-safe model file management.
-/// Instead of security-scoped bookmarks (macOS-only `withSecurityScope`), we copy
-/// selected model files into the app container and reference them from there.
-final class ModelFileAccess {
-    static let shared = ModelFileAccess()
-
-    private init() {}
-
-    enum ModelFileAccessError: LocalizedError {
-        case unableToCreateModelsDirectory
-        case sourceFileNotFound
-        case copyFailed(Error)
-
-        var errorDescription: String? {
-            switch self {
-            case .unableToCreateModelsDirectory:
-                return "Unable to create the Models directory."
-            case .sourceFileNotFound:
-                return "Selected model file could not be found."
-            case .copyFailed(let err):
-                return "Failed to copy model file: \(err.localizedDescription)"
-            }
-        }
+enum ModelFileAccess {
+    /// Create a security-scoped bookmark for an external model file URL.
+    static func makeBookmark(for url: URL) throws -> Data {
+        // Security-scoped bookmarks are the right approach for user-picked files.
+        // Works on iOS / iOS Simulator.
+        return try url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
     }
 
-    /// Directory inside the app sandbox where we keep imported models.
-    private var modelsDirectoryURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return base.appendingPathComponent("Models", isDirectory: true)
+    /// Human-friendly display name for the selected model file.
+    static func displayName(for url: URL) -> String {
+        // If you later want a nicer name, you can read resource values (like .localizedNameKey).
+        return url.lastPathComponent
     }
 
-    private func ensureModelsDirectoryExists() throws {
-        let fm = FileManager.default
-        let dir = modelsDirectoryURL
-
-        if fm.fileExists(atPath: dir.path) { return }
-
+    /// File size in bytes for the URL.
+    static func fileSize(at url: URL) -> Int64 {
         do {
-            try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
-        } catch {
-            throw ModelFileAccessError.unableToCreateModelsDirectory
-        }
-    }
-
-    /// Copies a picked model file into the app sandbox (Application Support/Models).
-    /// Returns the destination URL.
-    func importModelFile(from pickedURL: URL) throws -> URL {
-        try ensureModelsDirectoryExists()
-
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: pickedURL.path) else {
-            throw ModelFileAccessError.sourceFileNotFound
-        }
-
-        // Preserve filename; if collision exists, append a numeric suffix.
-        let originalName = pickedURL.lastPathComponent
-        var destURL = modelsDirectoryURL.appendingPathComponent(originalName)
-
-        if fm.fileExists(atPath: destURL.path) {
-            let base = destURL.deletingPathExtension().lastPathComponent
-            let ext = destURL.pathExtension
-            var i = 2
-            while fm.fileExists(atPath: destURL.path) {
-                let newName = ext.isEmpty ? "\(base)-\(i)" : "\(base)-\(i).\(ext)"
-                destURL = modelsDirectoryURL.appendingPathComponent(newName)
-                i += 1
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            if let size = values.fileSize {
+                return Int64(size)
             }
+        } catch {
+            // Fall through to FileManager as a secondary attempt.
         }
 
         do {
-            // Remove any stale file at destination (shouldn’t happen with the collision logic, but safe).
-            if fm.fileExists(atPath: destURL.path) {
-                try fm.removeItem(at: destURL)
+            let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+            if let n = attrs[.size] as? NSNumber {
+                return n.int64Value
             }
-            try fm.copyItem(at: pickedURL, to: destURL)
-            return destURL
         } catch {
-            throw ModelFileAccessError.copyFailed(error)
+            // Ignore; return 0 if unavailable.
         }
+
+        return 0
     }
 
-    /// Lists imported model files in the sandbox directory.
-    func listImportedModels() -> [URL] {
-        (try? ensureModelsDirectoryExists())
+    /// Resolve a bookmark into a URL and run an async block while holding a security-scoped access token.
+    static func withSecurityScopedURLAsync<T>(
+        bookmark: Data,
+        _ body: (URL) async throws -> T
+    ) async throws -> T {
+        var isStale = false
 
-        let fm = FileManager.default
-        let dir = modelsDirectoryURL
+        let url = try URL(
+            resolvingBookmarkData: bookmark,
+            options: [.withSecurityScope, .withoutUI],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
 
-        guard let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
-            return []
+        let didStart = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStart {
+                url.stopAccessingSecurityScopedResource()
+            }
         }
 
-        // You can filter extensions here if you only want GGUF, etc.
-        return items.sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
-    }
-
-    /// Deletes an imported model file.
-    func deleteImportedModel(at url: URL) throws {
-        let fm = FileManager.default
-        if fm.fileExists(atPath: url.path) {
-            try fm.removeItem(at: url)
-        }
+        // Even if stale, the URL may still work; if you want, you can regenerate the bookmark when stale.
+        return try await body(url)
     }
 }
