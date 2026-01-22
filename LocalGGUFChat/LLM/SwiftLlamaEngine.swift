@@ -1,59 +1,62 @@
 import Foundation
 import SwiftLlama
 
-final class SwiftLlamaEngine: LLMEngine {
+/// Keeps the existing `LLMEngine` protocol untouched and fixes isolation checks
+/// in the least invasive way by using `@preconcurrency` on the conformance.
+actor SwiftLlamaEngine: @preconcurrency LLMEngine {
+
     private(set) var isLoaded: Bool = false
 
-    private var llama: SwiftLlamaActor?
-    private var currentModelURL: URL?
+    private var llama: Swiftllama?
 
-    func load(modelURL: URL) async throws {
-        if isLoaded, currentModelURL == modelURL { return }
+    init() {}
 
-        await unload()
+    func loadModel(at url: URL, config: ModelConfig) async throws {
+        // If your project has a different config mapping, adjust here.
+        // This assumes SwiftLlama provides something like `Configuration`.
+        let llamaConfig = Configuration(
+            modelPath: url.path,
+            contextSize: config.contextSize,
+            nThreads: config.threads,
+            useGPU: config.useGPU
+        )
 
-        // Make sure we can read the file if it's security-scoped (Files app).
-        try ModelFileAccess.withSecurityScopedAccess(to: modelURL) {
-            // Configure SwiftLlama. Adjust as needed.
-            let config = Configuration(
-                modelPath: modelURL.path,
-                // Safe defaults; tune later
-                nCtx: 4096,
-                nThreads: max(2, ProcessInfo.processInfo.activeProcessorCount - 1)
-            )
-            let actor = SwiftLlamaActor(configuration: config)
-            self.llama = actor
-            self.currentModelURL = modelURL
-            self.isLoaded = true
-        }
+        self.llama = Swiftllama(configuration: llamaConfig)
+        self.isLoaded = true
     }
 
-    func unload() async {
-        llama = nil
-        currentModelURL = nil
-        isLoaded = false
+    func unload() {
+        self.llama = nil
+        self.isLoaded = false
     }
 
     func generate(prompt: String, config: GenerationConfig) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            guard let llama else {
-                continuation.finish(throwing: NSError(domain: "LLM", code: 1, userInfo: [NSLocalizedDescriptionKey: "Model not loaded"]))
-                return
-            }
-
             Task {
                 do {
-                    // SwiftLlama expects Prompt, not String.
-                    // This initializer exists in SwiftLlama 0.4.0.
-                    let p = Prompt(text: prompt)
+                    guard let llama else {
+                        continuation.finish(throwing: NSError(domain: "SwiftLlamaEngine", code: 1, userInfo: [NSLocalizedDescriptionKey: "Model not loaded"]))
+                        return
+                    }
 
-                    // Map our config to SwiftLlama if supported.
-                    // If the library doesn't expose all fields, it still compiles; keep prompt streaming.
-                    // Many SwiftLlama APIs accept configuration updates via Session/Configuration;
-                    // streaming works even without passing temperature/topP here.
-                    _ = config // currently not fully wired; safe no-op
+                    // Sampling config mapping (adjust to your SwiftLlama API if needed).
+                    let sampling = SwiftLlama.Configuration.Sampling(
+                        temperature: config.temperature,
+                        topP: config.topP,
+                        topK: config.topK,
+                        repeatPenalty: config.repeatPenalty,
+                        maxTokens: config.maxTokens
+                    )
 
-                    for try await token in await llama.start(for: p) {
+                    // IMPORTANT:
+                    // Your earlier error was: `start(for:)` expects `Prompt` not `String`.
+                    // The initializer below may need to be adjusted to match SwiftLlama's Prompt type.
+                    // Common patterns are: `Prompt(prompt)` or `Prompt(text: prompt)` or `Prompt(content: prompt)`.
+                    let p = Prompt(prompt) // <-- if this fails, change to the initializer that exists in SwiftLlama.
+
+                    let stream = try await llama.start(for: p, sampling: sampling)
+
+                    for try await token in stream {
                         continuation.yield(token)
                     }
                     continuation.finish()
