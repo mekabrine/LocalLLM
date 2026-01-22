@@ -1,38 +1,42 @@
 import Foundation
 
-/// A build-safe engine wrapper.
-/// This implementation focuses on compiling reliably in CI.
-/// You can later wire in the real SwiftLlama types once you finalize the API surface you want to use.
-actor SwiftLlamaEngine: @preconcurrency LLMEngine {
+/// Minimal in-memory engine that satisfies the LLMEngine protocol.
+/// You can replace the internals with SwiftLlama when ready.
+final class SwiftLlamaEngine: LLMEngine {
+    // MARK: - LLMEngine requirements
+    private(set) var isLoaded: Bool = false
+    private var modelURL: URL?
 
-    private var loadedModelURL: URL?
-
-    init() {}
-
-    // MARK: - LLMEngine
-
+    /// Load a model. Real implementations would initialize the GGUF runtime here.
     func load(modelURL: URL) async throws {
-        // Persist the URL to indicate "loaded".
-        // Real implementation should initialize SwiftLlama model/session here.
-        self.loadedModelURL = modelURL
+        self.modelURL = modelURL
+        self.isLoaded = true
     }
 
-    // If your LLMEngine protocol has additional requirements, keep these minimal helpers.
-    // Extra methods do not hurt conformance; missing required methods will.
+    /// Unload the current model.
     func unload() async {
-        self.loadedModelURL = nil
+        modelURL = nil
+        isLoaded = false
     }
 
-    /// Minimal non-streaming generation. Replace with real inference later.
-    func generate(prompt: String) async throws -> String {
-        guard loadedModelURL != nil else {
-            throw NSError(
-                domain: "SwiftLlamaEngine",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Model not loaded"]
-            )
+    /// Generate a token stream. This placeholder yields a single “OK” token.
+    func generate(prompt: String, config: GenerationConfig) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            // If no model is loaded, throw an error.
+            guard isLoaded else {
+                continuation.finish(
+                    throwing: NSError(
+                        domain: "SwiftLlamaEngine",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Model not loaded"]
+                    )
+                )
+                return
+            }
+
+            // Placeholder token stream.  Replace with real inference later.
+            continuation.yield("OK")
+            continuation.finish()
         }
-        // Placeholder response for build/runtime sanity.
-        return prompt.isEmpty ? "" : "OK"
     }
 }
