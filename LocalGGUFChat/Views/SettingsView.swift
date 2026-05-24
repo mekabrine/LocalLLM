@@ -13,6 +13,7 @@ struct SettingsView: View {
     private var models: FetchedResults<ModelReferenceEntity>
 
     @State private var showingImporter = false
+    @State private var isImporting = false
     @State private var importStatus: String?
     @State private var errorText: String?
 
@@ -65,6 +66,7 @@ struct SettingsView: View {
                     Button("Reset Generation Defaults") {
                         generationSettings.resetSamplingDefaults()
                     }
+                    .disabled(isImporting)
                 }
 
                 Section(header: Text("Models"), footer: Text("Imported GGUF files are copied into app storage so the app can reopen them reliably after relaunch.")) {
@@ -79,6 +81,7 @@ struct SettingsView: View {
                                     .tag(model.id?.uuidString ?? "")
                             }
                         }
+                        .disabled(isImporting)
 
                         ForEach(models) { model in
                             VStack(alignment: .leading, spacing: 4) {
@@ -102,6 +105,17 @@ struct SettingsView: View {
                     } label: {
                         Label("Import GGUF Models", systemImage: "square.and.arrow.down")
                     }
+                    .disabled(isImporting)
+                }
+
+                if isImporting {
+                    Section {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Importing model… Keep the app open.")
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
 
                 if let importStatus {
@@ -123,6 +137,7 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { presentationMode.wrappedValue.dismiss() }
+                        .disabled(isImporting)
                 }
             }
             .sheet(isPresented: $showingImporter) {
@@ -139,25 +154,53 @@ struct SettingsView: View {
             let urls = try result.get()
             guard !urls.isEmpty else { return }
 
-            var imported = 0
-            for url in urls {
-                let bookmark = try ModelFileAccess.makeBookmark(for: url)
-                let model = try PersistenceController.shared.upsertModel(
-                    from: bookmark,
-                    displayName: ModelFileAccess.displayName(for: url),
-                    originalPath: url.path,
-                    fileSize: ModelFileAccess.fileSize(at: url)
-                )
-
-                if generationSettings.defaultModelID.isEmpty, let id = model.id {
-                    generationSettings.defaultModelID = id.uuidString
-                }
-
-                imported += 1
-            }
-
-            importStatus = imported == 1 ? "Imported 1 model." : "Imported \(imported) models."
+            isImporting = true
+            importStatus = nil
             errorText = nil
+
+            Task {
+                do {
+                    var importedItems: [(bookmark: Data, displayName: String, originalPath: String, fileSize: Int64)] = []
+                    for url in urls {
+                        let displayName = ModelFileAccess.displayName(for: url)
+                        let originalPath = url.path
+                        let fileSize = ModelFileAccess.fileSize(at: url)
+                        let bookmark = try await ModelFileAccess.makeBookmarkAsync(for: url)
+                        importedItems.append((bookmark, displayName, originalPath, fileSize))
+                    }
+
+                    await MainActor.run {
+                        do {
+                            var count = 0
+                            for item in importedItems {
+                                let model = try PersistenceController.shared.upsertModel(
+                                    from: item.bookmark,
+                                    displayName: item.displayName,
+                                    originalPath: item.originalPath,
+                                    fileSize: item.fileSize
+                                )
+
+                                if generationSettings.defaultModelID.isEmpty, let id = model.id {
+                                    generationSettings.defaultModelID = id.uuidString
+                                }
+
+                                count += 1
+                            }
+
+                            importStatus = count == 1 ? "Imported 1 model." : "Imported \(count) models."
+                            errorText = nil
+                        } catch {
+                            errorText = error.localizedDescription
+                        }
+                        isImporting = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        errorText = error.localizedDescription
+                        isImporting = false
+                    }
+                }
+            }
         } catch {
             errorText = error.localizedDescription
         }
