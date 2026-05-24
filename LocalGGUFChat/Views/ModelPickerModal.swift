@@ -1,4 +1,3 @@
-
 import SwiftUI
 import CoreData
 import UniformTypeIdentifiers
@@ -49,7 +48,12 @@ struct ModelPickerModal: View {
                             selected = m
                         } label: {
                             HStack {
-                                Text(m.displayName ?? "Model")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(m.displayName ?? "Model")
+                                    Text(ByteCountFormatter.string(fromByteCount: m.fileSize, countStyle: .file))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
                                 Spacer()
                                 if selected == m { Image(systemName: "checkmark").foregroundColor(.accentColor) }
                             }
@@ -59,7 +63,7 @@ struct ModelPickerModal: View {
                     Button {
                         showingImporter = true
                     } label: {
-                        Label("Pick .gguf from Files", systemImage: "doc")
+                        Label("Import .gguf Files", systemImage: "doc")
                     }
                 }
 
@@ -84,7 +88,7 @@ struct ModelPickerModal: View {
             .fileImporter(
                 isPresented: $showingImporter,
                 allowedContentTypes: [ggufType],
-                allowsMultipleSelection: false
+                allowsMultipleSelection: true
             ) { result in
                 handleImport(result)
             }
@@ -94,19 +98,20 @@ struct ModelPickerModal: View {
     private func handleImport(_ result: Result<[URL], Error>) {
         do {
             let urls = try result.get()
-            guard let url = urls.first else { return }
+            guard !urls.isEmpty else { return }
 
-            let bookmark = try ModelFileAccess.makeBookmark(for: url)
-            let name = ModelFileAccess.displayName(for: url)
-            let size = ModelFileAccess.fileSize(at: url)
+            var firstImported: ModelReferenceEntity?
+            for url in urls {
+                let model = try PersistenceController.shared.upsertModel(
+                    from: try ModelFileAccess.makeBookmark(for: url),
+                    displayName: ModelFileAccess.displayName(for: url),
+                    originalPath: url.path,
+                    fileSize: ModelFileAccess.fileSize(at: url)
+                )
+                firstImported = firstImported ?? model
+            }
 
-            let model = try PersistenceController.shared.upsertModel(
-                from: bookmark,
-                displayName: name,
-                originalPath: url.path,
-                fileSize: size
-            )
-            selected = model
+            selected = firstImported ?? selected
             errorText = nil
         } catch {
             errorText = error.localizedDescription
