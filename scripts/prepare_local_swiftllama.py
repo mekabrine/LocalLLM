@@ -102,16 +102,33 @@ if count != 1:
     raise SystemExit('Failed to patch SwiftLlama tokenizer')
 model_path.write_text(patched)
 
+prompt_path = PACKAGE_DIR / 'Sources/SwiftLlama/Models/Prompt.swift'
+prompt_text = prompt_path.read_text()
+raw_alpaca = '''    private func encodeAlpacaPrompt() -> String {
+        userMessage
+    }
+'''
+prompt_text, alpaca_count = re.subn(
+    r'    private func encodeAlpacaPrompt\(\) -> String \{.*?    \}\n\n    private func encodeChatMLPrompt',
+    raw_alpaca + '\n    private func encodeChatMLPrompt',
+    prompt_text,
+    count=1,
+    flags=re.S
+)
+if alpaca_count != 1:
+    raise SystemExit('Failed to patch SwiftLlama Alpaca prompt wrapper')
+prompt_path.write_text(prompt_text)
+
 project = Path('project.yml')
 project_text = project.read_text()
 project_text = project_text.replace(
     '  SwiftLlama:\n    url: https://github.com/ShenghaiWang/SwiftLlama.git\n    from: 0.4.0',
     '  SwiftLlama:\n    path: LocalPackages/SwiftLlama'
 )
-for old_version in ['1.5', '1.6', '1.7', '1.8', '1.9']:
-    project_text = project_text.replace(f'MARKETING_VERSION: "{old_version}"', 'MARKETING_VERSION: "1.10"')
-for old_build in ['6', '7', '8', '9', '10']:
-    project_text = project_text.replace(f'CURRENT_PROJECT_VERSION: "{old_build}"', 'CURRENT_PROJECT_VERSION: "11"')
+for old_version in ['1.5', '1.6', '1.7', '1.8', '1.9', '1.10']:
+    project_text = project_text.replace(f'MARKETING_VERSION: "{old_version}"', 'MARKETING_VERSION: "1.11"')
+for old_build in ['6', '7', '8', '9', '10', '11']:
+    project_text = project_text.replace(f'CURRENT_PROJECT_VERSION: "{old_build}"', 'CURRENT_PROJECT_VERSION: "12"')
 project.write_text(project_text)
 
 plist = Path('LocalGGUFChat/Resources/Info.plist')
@@ -124,12 +141,12 @@ if plist.exists():
     )
     plist_text = re.sub(
         r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)',
-        r'\g<1>1.10\2',
+        r'\g<1>1.11\2',
         plist_text
     )
     plist_text = re.sub(
         r'(<key>CFBundleVersion</key>\s*<string>)[^<]+(</string>)',
-        r'\g<1>11\2',
+        r'\g<1>12\2',
         plist_text
     )
     plist.write_text(plist_text)
