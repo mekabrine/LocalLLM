@@ -9,6 +9,9 @@ final class GenerationSettings: ObservableObject {
         static let maxTokens = "generation.maxTokens"
         static let stopSequences = "generation.stopSequences"
         static let defaultModelID = "models.defaultModelID"
+        static let defaultImageModelID = "models.defaultImageModelID"
+        static let defaultSpeechToTextModelID = "models.defaultSpeechToTextModelID"
+        static let defaultVoiceOutputModelID = "models.defaultVoiceOutputModelID"
         static let generationMode = "generation.mode"
         static let promptStyle = "assistant.promptStyle"
         static let reasoningMode = "assistant.reasoningMode"
@@ -16,6 +19,16 @@ final class GenerationSettings: ObservableObject {
         static let liveDisplayMode = "assistant.liveDisplayMode"
         static let typingCharactersPerSecond = "assistant.typingCharactersPerSecond"
         static let globalSystemMessage = "assistant.globalSystemMessage"
+        static let smallModelProtection = "assistant.smallModelProtection"
+        static let largeModelSurvivalMode = "assistant.largeModelSurvivalMode"
+        static let imageGenerationEnabledByDefault = "imageGeneration.enabledByDefault"
+        static let imageSize = "imageGeneration.size"
+        static let imageQuality = "imageGeneration.quality"
+        static let voiceInputMode = "voice.inputMode"
+        static let voiceOutputMode = "voice.outputMode"
+        static let fileHandlingMode = "files.handlingMode"
+        static let showPromptPreview = "diagnostics.showPromptPreview"
+        static let detailedErrors = "diagnostics.detailedErrors"
     }
 
     private let defaults: UserDefaults
@@ -48,6 +61,21 @@ final class GenerationSettings: ObservableObject {
     var defaultModelID: String {
         get { defaults.string(forKey: Keys.defaultModelID) ?? "" }
         set { set(newValue, forKey: Keys.defaultModelID) }
+    }
+
+    var defaultImageModelID: String {
+        get { defaults.string(forKey: Keys.defaultImageModelID) ?? "" }
+        set { set(newValue, forKey: Keys.defaultImageModelID) }
+    }
+
+    var defaultSpeechToTextModelID: String {
+        get { defaults.string(forKey: Keys.defaultSpeechToTextModelID) ?? "" }
+        set { set(newValue, forKey: Keys.defaultSpeechToTextModelID) }
+    }
+
+    var defaultVoiceOutputModelID: String {
+        get { defaults.string(forKey: Keys.defaultVoiceOutputModelID) ?? "" }
+        set { set(newValue, forKey: Keys.defaultVoiceOutputModelID) }
     }
 
     var generationMode: GenerationMode {
@@ -88,6 +116,56 @@ final class GenerationSettings: ObservableObject {
         set { set(newValue, forKey: Keys.globalSystemMessage) }
     }
 
+    var smallModelProtection: Bool {
+        get { defaults.bool(forKey: Keys.smallModelProtection) }
+        set { set(newValue, forKey: Keys.smallModelProtection) }
+    }
+
+    var largeModelSurvivalMode: Bool {
+        get { defaults.bool(forKey: Keys.largeModelSurvivalMode) }
+        set { set(newValue, forKey: Keys.largeModelSurvivalMode) }
+    }
+
+    var imageGenerationEnabledByDefault: Bool {
+        get { defaults.bool(forKey: Keys.imageGenerationEnabledByDefault) }
+        set { set(newValue, forKey: Keys.imageGenerationEnabledByDefault) }
+    }
+
+    var imageSize: ImageGenerationSize {
+        get { ImageGenerationSize(rawValue: defaults.string(forKey: Keys.imageSize) ?? "") ?? .square512 }
+        set { set(newValue.rawValue, forKey: Keys.imageSize) }
+    }
+
+    var imageQuality: ImageGenerationQuality {
+        get { ImageGenerationQuality(rawValue: defaults.string(forKey: Keys.imageQuality) ?? "") ?? .balanced }
+        set { set(newValue.rawValue, forKey: Keys.imageQuality) }
+    }
+
+    var voiceInputMode: VoiceInputMode {
+        get { VoiceInputMode(rawValue: defaults.string(forKey: Keys.voiceInputMode) ?? "") ?? .system }
+        set { set(newValue.rawValue, forKey: Keys.voiceInputMode) }
+    }
+
+    var voiceOutputMode: VoiceOutputMode {
+        get { VoiceOutputMode(rawValue: defaults.string(forKey: Keys.voiceOutputMode) ?? "") ?? .off }
+        set { set(newValue.rawValue, forKey: Keys.voiceOutputMode) }
+    }
+
+    var fileHandlingMode: FileHandlingMode {
+        get { FileHandlingMode(rawValue: defaults.string(forKey: Keys.fileHandlingMode) ?? "") ?? .auto }
+        set { set(newValue.rawValue, forKey: Keys.fileHandlingMode) }
+    }
+
+    var showPromptPreview: Bool {
+        get { defaults.bool(forKey: Keys.showPromptPreview) }
+        set { set(newValue, forKey: Keys.showPromptPreview) }
+    }
+
+    var detailedErrors: Bool {
+        get { defaults.bool(forKey: Keys.detailedErrors) }
+        set { set(newValue, forKey: Keys.detailedErrors) }
+    }
+
     var stopSequences: [String] {
         stopSequencesText
             .split(whereSeparator: { $0.isNewline })
@@ -101,10 +179,12 @@ final class GenerationSettings: ObservableObject {
 
     func effectiveSettings(forModelSize fileSize: Int64) -> EffectiveGenerationSettings {
         let profile = GenerationProfile.profile(forFileSize: fileSize)
-        let resolvedPromptStyle = promptStyle.resolved(for: profile)
-        let resolvedReasoningMode = reasoningMode.resolved(for: profile)
+        let protectedSmallModel = smallModelProtection && profile.kind == .small
+        let survivalModel = largeModelSurvivalMode && (profile.kind == .large || profile.kind == .veryLarge)
+        let resolvedPromptStyle = protectedSmallModel ? .plain : promptStyle.resolved(for: profile)
+        let resolvedReasoningMode = protectedSmallModel ? .off : reasoningMode.resolved(for: profile)
 
-        if generationMode == .manual {
+        if generationMode == .manual, !protectedSmallModel, !survivalModel {
             return EffectiveGenerationSettings(
                 profile: profile,
                 config: generationConfig,
@@ -116,19 +196,23 @@ final class GenerationSettings: ObservableObject {
             )
         }
 
+        let maxTokensOverride = survivalModel ? min(profile.maxTokens, 96) : profile.maxTokens
+        let historyLimitOverride = protectedSmallModel || survivalModel ? 1 : profile.historyLimit
+        let promptLimitOverride = protectedSmallModel ? min(profile.promptCharacterLimit, 500) : (survivalModel ? min(profile.promptCharacterLimit, 800) : profile.promptCharacterLimit)
+
         return EffectiveGenerationSettings(
             profile: profile,
             config: GenerationConfig(
-                maxTokens: profile.maxTokens,
-                temperature: profile.temperature,
-                topP: profile.topP,
+                maxTokens: maxTokensOverride,
+                temperature: protectedSmallModel ? 0.55 : profile.temperature,
+                topP: protectedSmallModel ? 0.85 : profile.topP,
                 stop: stopSequences
             ),
             promptStyle: resolvedPromptStyle,
             reasoningMode: resolvedReasoningMode,
             reasoningDisplay: reasoningDisplay,
-            historyLimit: profile.historyLimit,
-            promptCharacterLimit: profile.promptCharacterLimit
+            historyLimit: historyLimitOverride,
+            promptCharacterLimit: promptLimitOverride
         )
     }
 
@@ -151,6 +235,16 @@ final class GenerationSettings: ObservableObject {
         maxTokens = GenerationPreset.balanced.maxTokens
         stopSequencesText = ""
         globalSystemMessage = Self.defaultSystemMessage
+        smallModelProtection = true
+        largeModelSurvivalMode = false
+        imageGenerationEnabledByDefault = false
+        imageSize = .square512
+        imageQuality = .balanced
+        voiceInputMode = .system
+        voiceOutputMode = .off
+        fileHandlingMode = .auto
+        showPromptPreview = false
+        detailedErrors = true
     }
 
     func chatInstructions(for chatID: UUID?) -> String {
@@ -188,13 +282,26 @@ final class GenerationSettings: ObservableObject {
             Keys.maxTokens: GenerationPreset.balanced.maxTokens,
             Keys.stopSequences: "",
             Keys.defaultModelID: "",
+            Keys.defaultImageModelID: "",
+            Keys.defaultSpeechToTextModelID: "",
+            Keys.defaultVoiceOutputModelID: "",
             Keys.generationMode: GenerationMode.auto.rawValue,
             Keys.promptStyle: PromptStyle.auto.rawValue,
             Keys.reasoningMode: ReasoningMode.auto.rawValue,
             Keys.reasoningDisplay: ReasoningDisplayMode.hidden.rawValue,
             Keys.liveDisplayMode: LiveDisplayMode.smoothLive.rawValue,
             Keys.typingCharactersPerSecond: 90,
-            Keys.globalSystemMessage: Self.defaultSystemMessage
+            Keys.globalSystemMessage: Self.defaultSystemMessage,
+            Keys.smallModelProtection: true,
+            Keys.largeModelSurvivalMode: false,
+            Keys.imageGenerationEnabledByDefault: false,
+            Keys.imageSize: ImageGenerationSize.square512.rawValue,
+            Keys.imageQuality: ImageGenerationQuality.balanced.rawValue,
+            Keys.voiceInputMode: VoiceInputMode.system.rawValue,
+            Keys.voiceOutputMode: VoiceOutputMode.off.rawValue,
+            Keys.fileHandlingMode: FileHandlingMode.auto.rawValue,
+            Keys.showPromptPreview: false,
+            Keys.detailedErrors: true
         ])
     }
 
@@ -224,6 +331,7 @@ enum GenerationMode: String, CaseIterable, Identifiable, Hashable, Sendable {
 
 enum PromptStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
     case auto
+    case plain
     case raw
     case simple
     case instruct
@@ -232,6 +340,7 @@ enum PromptStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
     var title: String {
         switch self {
         case .auto: return "Auto"
+        case .plain: return "Plain"
         case .raw: return "Raw"
         case .simple: return "Simple"
         case .instruct: return "Instruct"
@@ -241,7 +350,8 @@ enum PromptStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
     var subtitle: String {
         switch self {
         case .auto: return "Uses the safest style for the selected model size."
-        case .raw: return "Minimal prompt. Best for tiny models that ramble."
+        case .plain: return "Sends only the latest message. Best for tiny models."
+        case .raw: return "Minimal message with no chat template."
         case .simple: return "Short instruction prompt with no chat transcript labels."
         case .instruct: return "Instruction format for stronger instruct-tuned models."
         }
@@ -250,7 +360,7 @@ enum PromptStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
     func resolved(for profile: GenerationProfile) -> PromptStyle {
         guard self == .auto else { return self }
         switch profile.kind {
-        case .small: return .raw
+        case .small: return .plain
         case .medium: return .simple
         case .large, .veryLarge: return .simple
         }
@@ -288,8 +398,8 @@ enum ReasoningMode: String, CaseIterable, Identifiable, Hashable, Sendable {
     func resolved(for profile: GenerationProfile) -> ReasoningMode {
         guard self == .auto else { return self }
         switch profile.kind {
-        case .small: return .fast
-        case .medium: return .balanced
+        case .small: return .off
+        case .medium: return .fast
         case .large, .veryLarge: return .balanced
         }
     }
@@ -333,6 +443,85 @@ enum LiveDisplayMode: String, CaseIterable, Identifiable, Hashable, Sendable {
     }
 }
 
+enum ImageGenerationSize: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case square512
+    case square768
+    case portrait
+    case landscape
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .square512: return "512 × 512"
+        case .square768: return "768 × 768"
+        case .portrait: return "Portrait"
+        case .landscape: return "Landscape"
+        }
+    }
+}
+
+enum ImageGenerationQuality: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case fast
+    case balanced
+    case high
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .fast: return "Fast"
+        case .balanced: return "Balanced"
+        case .high: return "High"
+        }
+    }
+}
+
+enum VoiceInputMode: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case off
+    case system
+    case localModel
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .system: return "System Speech"
+        case .localModel: return "Local Model"
+        }
+    }
+}
+
+enum VoiceOutputMode: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case off
+    case manual
+    case autoRead
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .manual: return "Manual"
+        case .autoRead: return "Auto-read Replies"
+        }
+    }
+}
+
+enum FileHandlingMode: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case auto
+    case summarizeFirst
+    case useFullIfSmall
+    case askForLarge
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .auto: return "Auto"
+        case .summarizeFirst: return "Summarize First"
+        case .useFullIfSmall: return "Use Full Text if Small"
+        case .askForLarge: return "Ask Before Large Files"
+        }
+    }
+}
+
 struct EffectiveGenerationSettings: Sendable {
     let profile: GenerationProfile
     let config: GenerationConfig
@@ -369,14 +558,14 @@ struct GenerationProfile: Sendable {
             return GenerationProfile(
                 kind: .small,
                 title: "Small Model",
-                subtitle: "Short replies, minimal prompt, latest context only.",
-                maxTokens: 128,
-                temperature: 0.7,
-                topP: 0.9,
-                historyLimit: 2,
-                promptCharacterLimit: 900,
-                manualHistoryLimit: 4,
-                manualPromptCharacterLimit: 1_500
+                subtitle: "Plain prompts, short replies, latest message only.",
+                maxTokens: 96,
+                temperature: 0.55,
+                topP: 0.85,
+                historyLimit: 1,
+                promptCharacterLimit: 500,
+                manualHistoryLimit: 2,
+                manualPromptCharacterLimit: 800
             )
         }
 
@@ -399,14 +588,14 @@ struct GenerationProfile: Sendable {
             return GenerationProfile(
                 kind: .large,
                 title: "Large Model",
-                subtitle: "More context and longer answers.",
-                maxTokens: 384,
-                temperature: 0.8,
-                topP: 0.95,
-                historyLimit: 8,
-                promptCharacterLimit: 4_000,
-                manualHistoryLimit: 10,
-                manualPromptCharacterLimit: 5_000
+                subtitle: "More context and longer answers, but may be memory heavy.",
+                maxTokens: 320,
+                temperature: 0.75,
+                topP: 0.92,
+                historyLimit: 6,
+                promptCharacterLimit: 3_000,
+                manualHistoryLimit: 8,
+                manualPromptCharacterLimit: 4_000
             )
         }
 
@@ -414,13 +603,13 @@ struct GenerationProfile: Sendable {
             kind: .veryLarge,
             title: "Very Large Model",
             subtitle: "Conservative defaults to reduce memory pressure.",
-            maxTokens: 320,
-            temperature: 0.75,
-            topP: 0.92,
-            historyLimit: 6,
-            promptCharacterLimit: 3_000,
-            manualHistoryLimit: 8,
-            manualPromptCharacterLimit: 4_000
+            maxTokens: 128,
+            temperature: 0.65,
+            topP: 0.9,
+            historyLimit: 1,
+            promptCharacterLimit: 900,
+            manualHistoryLimit: 3,
+            manualPromptCharacterLimit: 1_500
         )
     }
 }
