@@ -2,7 +2,7 @@ import Foundation
 import SwiftLlama
 
 /// SwiftLlama-backed local GGUF engine.
-final class SwiftLlamaEngine: LLMEngine {
+final class SwiftLlamaEngine: LLMEngine, @unchecked Sendable {
     private(set) var isLoaded: Bool = false
 
     private var loadedModelPath: String?
@@ -37,28 +37,22 @@ final class SwiftLlamaEngine: LLMEngine {
 
     func generate(prompt: String, config: GenerationConfig) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            do {
-                try ensureLoadedForGeneration(config: config)
-            } catch {
-                continuation.finish(throwing: error)
-                return
-            }
-
-            guard let swiftLlama, isLoaded else {
-                continuation.finish(
-                    throwing: NSError(
-                        domain: "SwiftLlamaEngine",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "Model not loaded"]
-                    )
-                )
-                return
-            }
-
-            let nativePrompt = Prompt(type: .chatML, userMessage: prompt)
-
-            let task = Task {
+            let task = Task.detached(priority: .userInitiated) {
                 do {
+                    try self.ensureLoadedForGeneration(config: config)
+
+                    guard let swiftLlama = self.swiftLlama, self.isLoaded else {
+                        continuation.finish(
+                            throwing: NSError(
+                                domain: "SwiftLlamaEngine",
+                                code: 1,
+                                userInfo: [NSLocalizedDescriptionKey: "Model not loaded"]
+                            )
+                        )
+                        return
+                    }
+
+                    let nativePrompt = Prompt(type: .alpaca, userMessage: prompt)
                     var approximateTokens = 0
 
                     for try await token in await swiftLlama.start(for: nativePrompt) {
@@ -103,10 +97,6 @@ final class SwiftLlamaEngine: LLMEngine {
             return
         }
 
-        // Important: clear the old SwiftLlama object before constructing the new
-        // one. Its deinit calls llama_backend_free(), so replacing it after a new
-        // instance is created can invalidate the active backend and crash during
-        // tokenization.
         swiftLlama = nil
         isLoaded = false
 
