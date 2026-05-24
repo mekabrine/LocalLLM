@@ -18,8 +18,19 @@ subprocess.run([
 model_path = PACKAGE_DIR / 'Sources/SwiftLlama/LlamaModel.swift'
 text = model_path.read_text()
 
+text = text.replace('    private let model: Model\n', '    private let model: Model\n    private let vocab: OpaquePointer\n')
+text = text.replace(
+    '        self.model = model\n'
+    '        guard let context = llama_new_context_with_model(model, configuration.contextParameters) else {',
+    '        self.model = model\n'
+    '        self.vocab = llama_model_get_vocab(model)\n'
+    '        guard let context = llama_new_context_with_model(model, configuration.contextParameters) else {'
+)
+
 text = text.replace('        llama_backend_init()\n', '        _ = LlamaBackend.once\n')
 text = text.replace('        llama_backend_free()\n', '')
+text = text.replace('llama_token_is_eog(model, newToken)', 'llama_token_is_eog(vocab, newToken)')
+text = text.replace('llama_token_to_piece(model, token, &piece, length, 0, false)', 'llama_token_to_piece(vocab, token, &piece, length, 0, false)')
 
 if 'private enum LlamaBackend' not in text:
     text = text.replace(
@@ -44,7 +55,7 @@ text = text.replace(
 safe_tokenize = '''    private func tokenize(text: String, addBos: Bool) throws -> [Token] {
         let byteCount = Int32(text.utf8.count)
         let required = text.withCString { cText -> Int32 in
-            llama_tokenize(model, cText, byteCount, nil, 0, addBos, false)
+            llama_tokenize(vocab, cText, byteCount, nil, 0, addBos, false)
         }
 
         var capacity: Int
@@ -60,7 +71,7 @@ safe_tokenize = '''    private func tokenize(text: String, addBos: Bool) throws 
         var tokens = [Token](repeating: 0, count: capacity)
         let count = text.withCString { cText -> Int32 in
             tokens.withUnsafeMutableBufferPointer { buffer in
-                llama_tokenize(model, cText, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
+                llama_tokenize(vocab, cText, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
             }
         }
 
@@ -69,7 +80,7 @@ safe_tokenize = '''    private func tokenize(text: String, addBos: Bool) throws 
             tokens = [Token](repeating: 0, count: retryCapacity)
             let retryCount = text.withCString { cText -> Int32 in
                 tokens.withUnsafeMutableBufferPointer { buffer in
-                    llama_tokenize(model, cText, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
+                    llama_tokenize(vocab, cText, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
                 }
             }
             guard retryCount > 0 else {
