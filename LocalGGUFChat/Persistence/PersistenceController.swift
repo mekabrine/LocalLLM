@@ -56,15 +56,14 @@ final class PersistenceController {
 extension PersistenceController {
     @discardableResult
     func upsertModel(from bookmark: Data, displayName: String, originalPath: String?, fileSize: Int64) throws -> ModelReferenceEntity {
-        let req: NSFetchRequest<ModelReferenceEntity> = ModelReferenceEntity.fetchRequest()
-        req.fetchLimit = 1
-        req.predicate = NSPredicate(format: "bookmark == %@", bookmark as NSData)
+        if let originalPath, !originalPath.isEmpty,
+           let existing = try fetchModel(originalPath: originalPath) {
+            updateModel(existing, bookmark: bookmark, displayName: displayName, originalPath: originalPath, fileSize: fileSize)
+            return existing
+        }
 
-        if let existing = try viewContext.fetch(req).first {
-            existing.displayName = displayName
-            existing.originalPath = originalPath
-            existing.fileSize = fileSize
-            save()
+        if let existing = try fetchModel(displayName: displayName, fileSize: fileSize) {
+            updateModel(existing, bookmark: bookmark, displayName: displayName, originalPath: originalPath, fileSize: fileSize)
             return existing
         }
 
@@ -77,6 +76,28 @@ extension PersistenceController {
         model.createdAt = Date()
         save()
         return model
+    }
+
+    private func fetchModel(originalPath: String) throws -> ModelReferenceEntity? {
+        let req: NSFetchRequest<ModelReferenceEntity> = ModelReferenceEntity.fetchRequest()
+        req.fetchLimit = 1
+        req.predicate = NSPredicate(format: "originalPath == %@", originalPath)
+        return try viewContext.fetch(req).first
+    }
+
+    private func fetchModel(displayName: String, fileSize: Int64) throws -> ModelReferenceEntity? {
+        let req: NSFetchRequest<ModelReferenceEntity> = ModelReferenceEntity.fetchRequest()
+        req.fetchLimit = 1
+        req.predicate = NSPredicate(format: "displayName == %@ AND fileSize == %lld", displayName, fileSize)
+        return try viewContext.fetch(req).first
+    }
+
+    private func updateModel(_ model: ModelReferenceEntity, bookmark: Data, displayName: String, originalPath: String?, fileSize: Int64) {
+        model.displayName = displayName
+        model.originalPath = originalPath
+        model.fileSize = fileSize
+        model.bookmark = bookmark
+        save()
     }
 
     @discardableResult
