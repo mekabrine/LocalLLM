@@ -108,8 +108,10 @@ project_text = project_text.replace(
     '  SwiftLlama:\n    url: https://github.com/ShenghaiWang/SwiftLlama.git\n    from: 0.4.0',
     '  SwiftLlama:\n    path: LocalPackages/SwiftLlama'
 )
-project_text = project_text.replace('MARKETING_VERSION: "1.5"', 'MARKETING_VERSION: "1.6"')
-project_text = project_text.replace('CURRENT_PROJECT_VERSION: "6"', 'CURRENT_PROJECT_VERSION: "7"')
+project_text = project_text.replace('MARKETING_VERSION: "1.5"', 'MARKETING_VERSION: "1.7"')
+project_text = project_text.replace('CURRENT_PROJECT_VERSION: "6"', 'CURRENT_PROJECT_VERSION: "8"')
+project_text = project_text.replace('MARKETING_VERSION: "1.6"', 'MARKETING_VERSION: "1.7"')
+project_text = project_text.replace('CURRENT_PROJECT_VERSION: "7"', 'CURRENT_PROJECT_VERSION: "8"')
 project.write_text(project_text)
 
 print('Prepared patched local SwiftLlama package')
