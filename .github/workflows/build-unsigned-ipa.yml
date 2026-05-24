@@ -21,6 +21,9 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Prepare patched SwiftLlama
+        run: python3 scripts/prepare_local_swiftllama.py
+
       - name: Generate Xcode project
         run: xcodegen generate
 
