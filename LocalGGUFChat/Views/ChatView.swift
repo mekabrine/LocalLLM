@@ -271,9 +271,9 @@ struct ChatView: View {
 
     private func regenerateLastResponse() {
         guard let lastUserMessage else { return }
-        if let ordered = chat.messages?.array as? [MessageEntity],
-           let lastAssistant = ordered.last(where: { $0.role == MessageRole.assistant.rawValue }) {
-            PersistenceController.shared.deleteFromHere(message: lastAssistant)
+        let ordered = chat.messages?.array as? [MessageEntity] ?? []
+        if let last = ordered.last, last.role == MessageRole.assistant.rawValue {
+            PersistenceController.shared.deleteFromHere(message: last)
         }
 
         let assistantMsg = PersistenceController.shared.appendMessage(chat: chat, role: .assistant, text: "")
