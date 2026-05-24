@@ -22,6 +22,10 @@ struct ChatView: View {
     @State private var confirmDeleteFromHere: MessageEntity?
     @State private var showingModelPicker = false
     @State private var showingChatInstructions = false
+    @State private var showingFilePicker = false
+    @State private var pendingAttachments: [PendingFileAttachment] = []
+    @State private var generateImageInsteadOfText: Bool = false
+    @State private var activeDiagnostic: RuntimeDiagnostic?
     @State private var errorText: String?
     @State private var showScrollToBottom: Bool = false
 
@@ -48,21 +52,24 @@ struct ChatView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
-                    Button {
-                        showingChatInstructions = true
-                    } label: {
+                    Button { showingChatInstructions = true } label: {
                         Label("Chat Instructions", systemImage: "slider.horizontal.3")
                     }
 
-                    Button {
-                        showingModelPicker = true
-                    } label: {
+                    Button { showingModelPicker = true } label: {
                         Label("Change Model", systemImage: "cpu")
                     }
 
                     Button {
-                        regenerateLastResponse()
+                        if let diagnostic = activeDiagnostic {
+                            UIPasteboard.general.string = diagnostic.copyText
+                        }
                     } label: {
+                        Label("Copy Last Diagnostic", systemImage: "doc.on.doc")
+                    }
+                    .disabled(activeDiagnostic == nil)
+
+                    Button { regenerateLastResponse() } label: {
                         Label("Regenerate Last", systemImage: "arrow.clockwise")
                     }
                     .disabled(isGenerating || lastUserMessage == nil)
@@ -73,9 +80,7 @@ struct ChatView: View {
             }
         }
         .sheet(isPresented: $showingSelectionModal) {
-            if let activeSelection {
-                TextSelectionModal(text: activeSelection.text ?? "")
-            }
+            if let activeSelection { TextSelectionModal(text: activeSelection.text ?? "") }
         }
         .sheet(isPresented: $showingEditModal) {
             if let editingMessage {
@@ -96,6 +101,15 @@ struct ChatView: View {
             ChatInstructionsView(chat: chat)
                 .environmentObject(generationSettings)
         }
+        .sheet(isPresented: $showingFilePicker) {
+            FileDocumentPicker(allowsMultipleSelection: true) { result in
+                showingFilePicker = false
+                handleFilePick(result)
+            }
+        }
+        .sheet(item: $activeDiagnostic) { diagnostic in
+            RuntimeDiagnosticView(diagnostic: diagnostic)
+        }
         .alert(item: $confirmDeleteFromHere) { msg in
             Alert(
                 title: Text("Delete from here?"),
@@ -106,9 +120,10 @@ struct ChatView: View {
                 secondaryButton: .cancel()
             )
         }
-        .onDisappear {
-            stopGenerating()
+        .onAppear {
+            generateImageInsteadOfText = generationSettings.imageGenerationEnabledByDefault
         }
+        .onDisappear { stopGenerating() }
     }
 
     private var messageList: some View {
@@ -142,9 +157,7 @@ struct ChatView: View {
                                     editingMessage = msg
                                     showingEditModal = true
                                 },
-                                onRegenerate: {
-                                    regenerate(message: msg)
-                                },
+                                onRegenerate: { regenerate(message: msg) },
                                 onDeleteFromHere: { confirmDeleteFromHere = msg }
                             )
                             .id(msg.objectID)
@@ -155,9 +168,7 @@ struct ChatView: View {
                     .padding(.vertical, 8)
                 }
                 .simultaneousGesture(
-                    DragGesture().onChanged { _ in
-                        showScrollToBottom = true
-                    }
+                    DragGesture().onChanged { _ in showScrollToBottom = true }
                 )
                 .onChange(of: messages.count) { _ in
                     if !showScrollToBottom {
@@ -170,9 +181,7 @@ struct ChatView: View {
                     }
                 }
                 .onAppear {
-                    DispatchQueue.main.async {
-                        proxy.scrollTo("BOTTOM", anchor: .bottom)
-                    }
+                    DispatchQueue.main.async { proxy.scrollTo("BOTTOM", anchor: .bottom) }
                 }
 
                 if showScrollToBottom {
@@ -195,24 +204,49 @@ struct ChatView: View {
     private var composer: some View {
         VStack(spacing: 8) {
             if let errorText {
-                Text(errorText)
+                Button {
+                    if activeDiagnostic != nil { activeDiagnostic = activeDiagnostic }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text(errorText)
+                            .lineLimit(2)
+                        Spacer()
+                        if activeDiagnostic != nil { Image(systemName: "chevron.up") }
+                    }
                     .font(.footnote)
-                    .foregroundColor(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundColor(StudioTheme.danger)
                     .padding(.horizontal, 14)
+                }
+                .buttonStyle(.plain)
             }
 
+            if !pendingAttachments.isEmpty {
+                attachmentsStrip
+            }
+
+            composerModeRow
+
             HStack(alignment: .bottom, spacing: 10) {
+                Button { showingFilePicker = true } label: {
+                    Image(systemName: "plus")
+                        .font(.headline)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(Color.white.opacity(0.10)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Attach file")
+
                 ZStack(alignment: .topLeading) {
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .fill(Color.white.opacity(0.10))
                         .overlay(
                             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                                .stroke(Color.white.opacity(generateImageInsteadOfText ? 0.28 : 0.12), lineWidth: 1)
                         )
 
                     if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(chat.model == nil ? "Select a model first" : "Message LocalLLM")
+                        Text(placeholderText)
                             .foregroundColor(.secondary)
                             .padding(.leading, 16)
                             .padding(.top, 13)
@@ -233,7 +267,7 @@ struct ChatView: View {
                 .frame(height: composerTextHeight + 8)
 
                 Button(action: primaryComposerAction) {
-                    Image(systemName: isGenerating ? "stop.circle.fill" : "arrow.up.circle.fill")
+                    Image(systemName: sendButtonIcon)
                         .font(.system(size: 38))
                         .symbolRenderingMode(.hierarchical)
                 }
@@ -241,21 +275,85 @@ struct ChatView: View {
                 .accessibilityLabel(isGenerating ? "Stop generating" : "Send")
             }
             .padding(.horizontal, 14)
-            .padding(.top, 10)
             .padding(.bottom, 10)
         }
-        .background(
-            Color.black
-                .opacity(0.96)
-                .ignoresSafeArea(edges: .bottom)
-        )
-        .overlay(alignment: .top) {
-            Divider().opacity(0.35)
+        .padding(.top, 10)
+        .background(Color.black.opacity(0.96).ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) { Divider().opacity(0.35) }
+    }
+
+    private var composerModeRow: some View {
+        HStack(spacing: 14) {
+            Button {
+                showingFilePicker = true
+            } label: {
+                Label("Files", systemImage: "doc.badge.plus")
+            }
+
+            Button {
+                errorText = "Voice input UI is ready. Local speech-to-text backend support still needs to be connected."
+            } label: {
+                Label("Voice", systemImage: "mic")
+            }
+
+            Toggle(isOn: $generateImageInsteadOfText) {
+                Label("Generate Image", systemImage: "photo")
+            }
+            .toggleStyle(.button)
+            .tint(.accentColor)
+
+            Spacer()
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundColor(StudioTheme.secondaryText)
+        .padding(.horizontal, 16)
+    }
+
+    private var attachmentsStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(pendingAttachments) { attachment in
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text.fill")
+                            .foregroundColor(.accentColor)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(attachment.title)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                            Text(attachment.summary)
+                                .font(.caption2)
+                                .foregroundColor(StudioTheme.secondaryText)
+                                .lineLimit(1)
+                        }
+                        Button {
+                            pendingAttachments.removeAll { $0.id == attachment.id }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(StudioTheme.secondaryText)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(StudioTheme.surface))
+                }
+            }
+            .padding(.horizontal, 14)
         }
     }
 
     private var canSend: Bool {
-        !isGenerating && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && chat.model != nil
+        let hasText = !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !isGenerating && chat.model != nil && (hasText || !pendingAttachments.isEmpty)
+    }
+
+    private var placeholderText: String {
+        if generateImageInsteadOfText { return "Describe the image to generate" }
+        return chat.model == nil ? "Select a model first" : "Message LocalLLM"
+    }
+
+    private var sendButtonIcon: String {
+        if isGenerating { return "stop.circle.fill" }
+        return generateImageInsteadOfText ? "sparkles" : "arrow.up.circle.fill"
     }
 
     private var lastUserMessage: MessageEntity? {
@@ -263,11 +361,7 @@ struct ChatView: View {
     }
 
     private func primaryComposerAction() {
-        if isGenerating {
-            stopGenerating()
-        } else {
-            send()
-        }
+        if isGenerating { stopGenerating() } else { send() }
     }
 
     private func stopGenerating() {
@@ -281,18 +375,72 @@ struct ChatView: View {
         guard canSend else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         errorText = nil
+        activeDiagnostic = nil
         showScrollToBottom = false
 
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let messageText = composedUserMessage(typedText: trimmed)
         inputText = ""
+        pendingAttachments.removeAll()
 
-        let userMsg = PersistenceController.shared.appendMessage(chat: chat, role: .user, text: trimmed)
+        let userMsg = PersistenceController.shared.appendMessage(chat: chat, role: .user, text: messageText)
+
+        if generateImageInsteadOfText {
+            createImageGenerationPlaceholder(for: userMsg, prompt: trimmed)
+            return
+        }
+
         let assistantMsg = PersistenceController.shared.appendMessage(chat: chat, role: .assistant, text: "")
-
         isGenerating = true
-
         generationTask?.cancel()
         generationTask = Task { await generateReply(into: assistantMsg, including: userMsg) }
+    }
+
+    private func createImageGenerationPlaceholder(for userMsg: MessageEntity, prompt: String) {
+        let selectedImageModel = generationSettings.defaultImageModelID.isEmpty ? "No image model selected" : "Selected image model"
+        let response = """
+        Image generation request queued.
+
+        Prompt: \(prompt.isEmpty ? "Attached file context" : prompt)
+        Model: \(selectedImageModel)
+        Size: \(generationSettings.imageSize.title)
+        Quality: \(generationSettings.imageQuality.title)
+
+        Image generation UI and routing are ready. A dedicated local image backend still needs to be connected before this can render pixels.
+        """
+        PersistenceController.shared.appendMessage(chat: chat, role: .assistant, text: response)
+    }
+
+    private func composedUserMessage(typedText: String) -> String {
+        guard !pendingAttachments.isEmpty else { return typedText }
+        let fileText = pendingAttachments.map { attachment in
+            """
+            Attached file: \(attachment.title)
+            \(attachment.summary)
+
+            \(attachment.text)
+            """
+        }.joined(separator: "\n\n---\n\n")
+
+        if typedText.isEmpty {
+            return "Please use the attached file context.\n\n\(fileText)"
+        }
+        return "\(typedText)\n\nFile context:\n\(fileText)"
+    }
+
+    private func handleFilePick(_ result: Result<[URL], Error>) {
+        do {
+            let urls = try result.get()
+            guard !urls.isEmpty else { return }
+            var newAttachments: [PendingFileAttachment] = []
+            for url in urls {
+                let extracted = try ChatFileAttachmentExtractor.extractText(from: url)
+                newAttachments.append(PendingFileAttachment(title: extracted.title, summary: extracted.summary, text: extracted.text))
+            }
+            pendingAttachments.append(contentsOf: newAttachments)
+        } catch {
+            errorText = error.localizedDescription
+        }
     }
 
     private func regenerateLastResponse() {
@@ -305,6 +453,7 @@ struct ChatView: View {
         let assistantMsg = PersistenceController.shared.appendMessage(chat: chat, role: .assistant, text: "")
         isGenerating = true
         errorText = nil
+        activeDiagnostic = nil
         generationTask?.cancel()
         generationTask = Task { await generateReply(into: assistantMsg, including: lastUserMessage) }
     }
@@ -320,21 +469,27 @@ struct ChatView: View {
         let assistantMsg = PersistenceController.shared.appendMessage(chat: chat, role: .assistant, text: "")
         isGenerating = true
         errorText = nil
+        activeDiagnostic = nil
         generationTask?.cancel()
         generationTask = Task { await generateReply(into: assistantMsg, including: previousUser) }
     }
 
     private func generateReply(into assistantEntity: MessageEntity, including userEntity: MessageEntity) async {
         var displayDriver: ResponseDisplayDriver?
+        var diagnosticModel: ModelReferenceEntity?
+        var diagnosticSettings: EffectiveGenerationSettings?
+        var stage = "Preparing generation"
 
         do {
             guard let modelEntity = chat.model else {
                 throw NSError(domain: "ChatView", code: 1, userInfo: [NSLocalizedDescriptionKey: "No model selected"])
             }
 
+            diagnosticModel = modelEntity
             let model = ModelReference(modelEntity)
             let engine = appState.engine(for: model.id)
             let effective = await MainActor.run { generationSettings.effectiveSettings(forModelSize: modelEntity.fileSize) }
+            diagnosticSettings = effective
             let systemMessage = await MainActor.run { generationSettings.combinedSystemMessage(for: chat.id) }
             let liveDisplay = await MainActor.run { generationSettings.liveDisplayMode }
             let typingSpeed = await MainActor.run { generationSettings.typingCharactersPerSecond }
@@ -349,9 +504,12 @@ struct ChatView: View {
                 )
             }
 
+            stage = "Checking file access"
             let finalOutput = try await ModelFileAccess.withSecurityScopedURLAsync(bookmark: model.bookmark) { url -> String in
+                stage = "Loading backend"
                 try await engine.load(modelURL: url)
 
+                stage = "Building prompt"
                 let prompt = PromptBuilder.build(
                     messages: history,
                     systemMessage: systemMessage,
@@ -363,19 +521,16 @@ struct ChatView: View {
                 var visibleBuffer = ""
                 var lastPersist = Date()
 
+                stage = "Streaming response"
                 for try await token in stream {
                     if Task.isCancelled { break }
                     rawBuffer += token
                     let filtered = GenerationOutputFilter.filteredText(from: rawBuffer, userStops: effective.config.stop)
                     visibleBuffer = filtered.text
 
-                    await MainActor.run {
-                        displayDriver?.updateTarget(visibleBuffer)
-                    }
+                    await MainActor.run { displayDriver?.updateTarget(visibleBuffer) }
 
-                    if filtered.shouldStop {
-                        break
-                    }
+                    if filtered.shouldStop { break }
 
                     if Date().timeIntervalSince(lastPersist) > 0.35 {
                         await MainActor.run { PersistenceController.shared.save() }
@@ -403,9 +558,12 @@ struct ChatView: View {
                 PersistenceController.shared.save()
             }
         } catch {
+            let diagnostic = RuntimeDiagnostic.from(error: error, stage: stage, model: diagnosticModel, settings: diagnosticSettings)
             await MainActor.run {
                 displayDriver?.cancel()
-                errorText = error.localizedDescription
+                activeDiagnostic = diagnostic
+                errorText = generationSettings.detailedErrors ? diagnostic.shortMessage : error.localizedDescription
+                assistantEntity.text = ""
                 isGenerating = false
                 generationTask = nil
             }
@@ -414,16 +572,10 @@ struct ChatView: View {
 
     private func thinkingText(for mode: ReasoningMode, display: ReasoningDisplayMode) -> String {
         guard display != .hidden else { return "" }
-
         switch mode {
-        case .deep:
-            return "Thinking deeply…"
-        case .balanced:
-            return "Thinking…"
-        case .fast, .auto:
-            return "Thinking…"
-        case .off:
-            return ""
+        case .deep: return "Thinking deeply…"
+        case .balanced, .fast, .auto: return "Thinking…"
+        case .off: return ""
         }
     }
 
@@ -434,9 +586,9 @@ struct ChatView: View {
     @ViewBuilder
     private func modelHeader(model: ModelReferenceEntity) -> some View {
         let profile = GenerationProfile.profile(forFileSize: model.fileSize)
+        let info = ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize)
         HStack(spacing: 12) {
-            Image(systemName: "cpu.fill")
-                .foregroundColor(.accentColor)
+            StudioIconCircle(systemName: info.capability.systemImage, color: .accentColor, size: 38)
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.displayName ?? "Model")
                     .font(.subheadline.weight(.bold))
@@ -445,11 +597,7 @@ struct ChatView: View {
                     .font(.caption).foregroundColor(.secondary)
             }
             Spacer()
-            Text(generationSettings.generationMode == .auto ? "Auto" : "Manual")
-                .font(.caption2.weight(.bold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+            StudioBadge(title: generationSettings.generationMode == .auto ? "Auto" : "Manual", color: .accentColor)
         }
         .padding(14)
         .background(GlassBackground(cornerRadius: 20))
@@ -497,6 +645,82 @@ private struct MessageRow: View {
             }
             Divider()
             Button(role: .destructive) { onDeleteFromHere() } label: { Label("Delete from Here", systemImage: "trash") }
+        }
+    }
+}
+
+private struct RuntimeDiagnosticView: View {
+    @Environment(\.presentationMode) private var presentationMode
+    let diagnostic: RuntimeDiagnostic
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    StudioGlassCard(cornerRadius: 18, borderColor: StudioTheme.danger.opacity(0.35)) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Likely Cause", systemImage: "exclamationmark.triangle.fill")
+                                .font(.headline)
+                                .foregroundColor(StudioTheme.danger)
+                            Text(diagnostic.likelyCause)
+                                .font(.subheadline)
+                        }
+                    }
+
+                    diagnosticsBlock(title: "What Happened", rows: [
+                        ("Stage", diagnostic.stage),
+                        ("Raw Error", diagnostic.rawError)
+                    ])
+
+                    diagnosticsBlock(title: "Model", rows: [
+                        ("Name", diagnostic.modelName),
+                        ("Size", diagnostic.modelSize),
+                        ("Compatibility", diagnostic.compatibility)
+                    ])
+
+                    diagnosticsBlock(title: "Settings", rows: [("Current", diagnostic.settingsSummary)])
+
+                    StudioGlassCard(cornerRadius: 18) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("What to Try")
+                                .font(.headline)
+                            Text("Use a smaller model, lower context/output, enable Large Model Survival Mode, choose a different quantization, or use remote/server mode for 30B+ models.")
+                                .font(.subheadline)
+                                .foregroundColor(StudioTheme.secondaryText)
+                        }
+                    }
+                }
+                .padding(18)
+            }
+            .background(StudioTheme.background.ignoresSafeArea())
+            .navigationTitle("Model Load Error")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") { presentationMode.wrappedValue.dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Copy") { UIPasteboard.general.string = diagnostic.copyText }
+                }
+            }
+        }
+    }
+
+    private func diagnosticsBlock(title: String, rows: [(String, String)]) -> some View {
+        StudioGlassCard(cornerRadius: 18) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title).font(.headline)
+                ForEach(rows, id: \.0) { row in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.0)
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(StudioTheme.secondaryText)
+                        Text(row.1)
+                            .font(.footnote.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+            }
         }
     }
 }
