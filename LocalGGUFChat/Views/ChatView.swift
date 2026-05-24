@@ -1,4 +1,3 @@
-
 import SwiftUI
 import CoreData
 import UIKit
@@ -6,6 +5,7 @@ import UIKit
 struct ChatView: View {
     @Environment(\.managedObjectContext) private var moc
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var generationSettings: GenerationSettings
 
     @ObservedObject var chat: ChatEntity
 
@@ -67,6 +67,7 @@ struct ChatView: View {
                 chat.updatedAt = Date()
                 PersistenceController.shared.save()
             }
+            .environment(\.managedObjectContext, moc)
         }
         .alert(item: $confirmDeleteFromHere) { msg in
             Alert(
@@ -79,7 +80,7 @@ struct ChatView: View {
             )
         }
         .onDisappear {
-            generationTask?.cancel()
+            stopGenerating()
         }
     }
 
@@ -170,17 +171,17 @@ struct ChatView: View {
                     )
                     .frame(minHeight: 40)
 
-                Button(action: send) {
+                Button(action: primaryComposerAction) {
                     if isGenerating {
-                        ProgressView()
-                            .frame(width: 44, height: 44)
+                        Image(systemName: "stop.circle.fill")
+                            .font(.system(size: 34))
                     } else {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 34))
                     }
                 }
-                .disabled(!canSend)
-                .accessibilityLabel("Send")
+                .disabled(!isGenerating && !canSend)
+                .accessibilityLabel(isGenerating ? "Stop generating" : "Send")
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
@@ -193,6 +194,20 @@ struct ChatView: View {
 
     private var canSend: Bool {
         !isGenerating && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && chat.model != nil
+    }
+
+    private func primaryComposerAction() {
+        if isGenerating {
+            stopGenerating()
+        } else {
+            send()
+        }
+    }
+
+    private func stopGenerating() {
+        generationTask?.cancel()
+        generationTask = nil
+        isGenerating = false
     }
 
     private func send() {
@@ -219,13 +234,14 @@ struct ChatView: View {
             }
             let model = ModelReference(modelEntity)
             let engine = appState.engine(for: model.id)
+            let config = await MainActor.run { generationSettings.generationConfig }
 
             try await ModelFileAccess.withSecurityScopedURLAsync(bookmark: model.bookmark) { url in
                 try await engine.load(modelURL: url)
 
                 let history = messages.map(Message.init)
                 let prompt = PromptBuilder.build(messages: history)
-                let stream = await engine.generate(prompt: prompt, config: GenerationConfig(maxTokens: 512))
+                let stream = await engine.generate(prompt: prompt, config: config)
 
                 var buffer = ""
                 var lastPersist = Date()
@@ -252,11 +268,21 @@ struct ChatView: View {
                 }
             }
 
-            await MainActor.run { isGenerating = false }
+            await MainActor.run {
+                isGenerating = false
+                generationTask = nil
+            }
+        } catch is CancellationError {
+            await MainActor.run {
+                isGenerating = false
+                generationTask = nil
+                PersistenceController.shared.save()
+            }
         } catch {
             await MainActor.run {
                 errorText = error.localizedDescription
                 isGenerating = false
+                generationTask = nil
             }
         }
     }
