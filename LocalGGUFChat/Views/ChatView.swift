@@ -157,39 +157,57 @@ struct ChatView: View {
     private var composer: some View {
         VStack(spacing: 8) {
             if let errorText {
-                Text(errorText).font(.footnote).foregroundColor(.red)
-                    .padding(.horizontal, 12)
+                Text(errorText)
+                    .font(.footnote)
+                    .foregroundColor(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
             }
 
-            HStack(alignment: .bottom, spacing: 10) {
-                GlassBackground(cornerRadius: 18)
-                    .overlay(
-                        GrowingTextEditor(text: $inputText, minHeight: 40, maxHeight: 140) {
-                            if canSend { send() }
-                        }
-                        .padding(.horizontal, 2)
-                    )
-                    .frame(minHeight: 40)
+            HStack(alignment: .bottom, spacing: 8) {
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(Color.secondary.opacity(0.16))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                .stroke(Color.secondary.opacity(0.28), lineWidth: 1)
+                        )
+
+                    if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(chat.model == nil ? "Select a model first" : "Message")
+                            .foregroundColor(.secondary)
+                            .padding(.leading, 16)
+                    }
+
+                    GrowingTextEditor(text: $inputText, minHeight: 38, maxHeight: 92) {
+                        if canSend { send() }
+                    }
+                    .frame(height: 42)
+                    .padding(.leading, 8)
+                    .padding(.trailing, 6)
+                }
+                .frame(height: 50)
 
                 Button(action: primaryComposerAction) {
-                    if isGenerating {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 34))
-                    } else {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 34))
-                    }
+                    Image(systemName: isGenerating ? "stop.circle.fill" : "arrow.up.circle.fill")
+                        .font(.system(size: 38))
+                        .symbolRenderingMode(.hierarchical)
                 }
                 .disabled(!isGenerating && !canSend)
                 .accessibilityLabel(isGenerating ? "Stop generating" : "Send")
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
             .padding(.bottom, 10)
         }
         .background(
-            GlassBackground(cornerRadius: 0)
+            Color(UIColor.systemBackground)
+                .opacity(0.96)
                 .ignoresSafeArea(edges: .bottom)
         )
+        .overlay(alignment: .top) {
+            Divider()
+        }
     }
 
     private var canSend: Bool {
@@ -241,7 +259,7 @@ struct ChatView: View {
 
                 let history = messages.map(Message.init)
                 let prompt = PromptBuilder.build(messages: history)
-                let stream = await engine.generate(prompt: prompt, config: config)
+                let stream = engine.generate(prompt: prompt, config: config)
 
                 var buffer = ""
                 var lastPersist = Date()
@@ -298,7 +316,7 @@ struct ChatView: View {
                 .foregroundColor(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.displayName ?? "Model")
-                    .font(.subheadline).bold()
+                    .font(.subheadline.weight(.bold))
                 Text("\(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file))")
                     .font(.caption).foregroundColor(.secondary)
             }
@@ -319,7 +337,7 @@ struct ChatView: View {
                     PersistenceController.shared.deleteFromHere(message: first)
                 }
             }
-            .font(.caption).bold()
+            .font(.caption.weight(.bold))
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.orange.opacity(0.12)))
