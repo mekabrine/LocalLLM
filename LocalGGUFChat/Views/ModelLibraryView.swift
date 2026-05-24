@@ -17,6 +17,7 @@ struct ModelLibraryView: View {
     @State private var isImporting = false
     @State private var statusText: String?
     @State private var errorText: String?
+    @State private var refreshKey = UUID()
 
     var body: some View {
         NavigationView {
@@ -55,7 +56,7 @@ struct ModelLibraryView: View {
             .sheet(isPresented: $showingImporter) {
                 ModelDocumentPicker(allowsMultipleSelection: true) { result in
                     showingImporter = false
-                    importModels(result)
+                    importModels(result, purpose: selectedFilter)
                 }
             }
         }
@@ -68,7 +69,7 @@ struct ModelLibraryView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Model Library")
                         .font(.largeTitle.weight(.bold))
-                    Text("Text, image, voice, files, and future vision models.")
+                    Text("Import from a tab to choose the model's purpose. You can change it later from the card menu.")
                         .font(.subheadline)
                         .foregroundColor(StudioTheme.secondaryText)
                 }
@@ -101,8 +102,13 @@ struct ModelLibraryView: View {
     private var modelGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 14)], spacing: 14) {
             ForEach(filteredModels) { model in
-                ModelLibraryCard(model: model)
-                    .environmentObject(generationSettings)
+                ModelLibraryCard(
+                    model: model,
+                    onPurposeChanged: {
+                        refreshKey = UUID()
+                    }
+                )
+                .environmentObject(generationSettings)
             }
 
             if filteredModels.isEmpty {
@@ -116,7 +122,7 @@ struct ModelLibraryView: View {
                             .foregroundColor(StudioTheme.secondaryText)
                             .multilineTextAlignment(.center)
                         Button { showingImporter = true } label: {
-                            Label("Import Model", systemImage: "square.and.arrow.down")
+                            Label("Import as \(selectedFilter.importTitle)", systemImage: "square.and.arrow.down")
                                 .font(.headline)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 13)
@@ -133,25 +139,26 @@ struct ModelLibraryView: View {
     }
 
     private var filteredModels: [ModelReferenceEntity] {
+        _ = refreshKey
         let all = Array(models)
         return all.filter { model in
-            let info = ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize)
-            if selectedFilter == .fileHelper { return info.capability == .text }
-            return info.capability == selectedFilter
+            let purpose = ModelPurposeStore.purpose(for: model)
+            if selectedFilter == .fileHelper { return purpose == .fileHelper || purpose == .text }
+            return purpose == selectedFilter
         }
     }
 
     private var emptyStateText: String {
         switch selectedFilter {
-        case .imageGeneration: return "Import a compatible diffusion/image model. The UI is ready; a dedicated image backend is still required."
-        case .speechToText: return "Import a speech-to-text model such as a Whisper-style model."
-        case .textToSpeech: return "Import a local voice/TTS model, or use the system voice option in Settings."
-        case .vision: return "Vision models and image uploads are coming later."
-        default: return "Import a model to add it to this category."
+        case .imageGeneration: return "Import from this tab to save the model as Image Generation, even if its filename does not look like an image model. A dedicated image backend is still required to render pixels."
+        case .speechToText: return "Import from this tab to save the model as Speech-to-Text."
+        case .textToSpeech: return "Import from this tab to save the model as Text-to-Speech."
+        case .vision: return "Import from this tab to save the model as Vision. Image uploads still wait for a vision backend."
+        default: return "Import from this tab to save the model with this purpose."
         }
     }
 
-    private func importModels(_ result: Result<[URL], Error>) {
+    private func importModels(_ result: Result<[URL], Error>, purpose: ModelCapability) {
         do {
             let urls = try result.get()
             guard !urls.isEmpty else { return }
@@ -180,11 +187,13 @@ struct ModelLibraryView: View {
                                     originalPath: item.originalPath,
                                     fileSize: item.fileSize
                                 )
-                                setDefaultIfNeeded(model)
+                                ModelPurposeStore.setPurpose(purpose, for: model)
+                                setDefaultIfNeeded(model, purpose: purpose)
                                 count += 1
                             }
-                            statusText = count == 1 ? "Imported 1 model." : "Imported \(count) models."
+                            statusText = count == 1 ? "Imported 1 model as \(purpose.importTitle)." : "Imported \(count) models as \(purpose.importTitle)."
                             errorText = nil
+                            refreshKey = UUID()
                             isImporting = false
                         } catch {
                             errorText = error.localizedDescription
@@ -204,10 +213,9 @@ struct ModelLibraryView: View {
         }
     }
 
-    private func setDefaultIfNeeded(_ model: ModelReferenceEntity) {
-        let info = ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize)
+    private func setDefaultIfNeeded(_ model: ModelReferenceEntity, purpose: ModelCapability) {
         guard let id = model.id?.uuidString else { return }
-        switch info.capability {
+        switch purpose {
         case .text:
             if generationSettings.defaultModelID.isEmpty { generationSettings.defaultModelID = id }
         case .imageGeneration:
@@ -225,9 +233,10 @@ struct ModelLibraryView: View {
 private struct ModelLibraryCard: View {
     @EnvironmentObject private var generationSettings: GenerationSettings
     @ObservedObject var model: ModelReferenceEntity
+    let onPurposeChanged: () -> Void
 
     private var info: ModelCapabilityInfo {
-        ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize)
+        ModelCapabilityInfo.resolve(for: model)
     }
 
     var body: some View {
@@ -237,10 +246,21 @@ private struct ModelLibraryCard: View {
                     StudioIconCircle(systemName: info.capability.systemImage, color: badgeColor)
                     Spacer()
                     Menu {
+                        Menu("Change Purpose") {
+                            ForEach(ModelCapability.allCases) { purpose in
+                                Button(purpose.importTitle) { changePurpose(to: purpose) }
+                            }
+                        }
+                        Divider()
                         Button("Set as Default Chat Model") { setDefault(.text) }
+                            .disabled(info.capability != .text)
                         Button("Set as Default Image Model") { setDefault(.imageGeneration) }
+                            .disabled(info.capability != .imageGeneration)
                         Button("Set as Default Speech-to-Text") { setDefault(.speechToText) }
+                            .disabled(info.capability != .speechToText)
                         Button("Set as Default Voice Output") { setDefault(.textToSpeech) }
+                            .disabled(info.capability != .textToSpeech)
+                        Divider()
                         Button("Copy Diagnostics") { UIPasteboard.general.string = diagnostics }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -318,7 +338,7 @@ private struct ModelLibraryCard: View {
         """
         Model: \(model.displayName ?? "Unknown")
         Size: \(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file))
-        Capability: \(info.capability.title)
+        Purpose: \(info.capability.title)
         Architecture: \(info.architecture)
         Quantization: \(info.quantization)
         Compatibility: \(info.compatibility.title)
@@ -326,8 +346,15 @@ private struct ModelLibraryCard: View {
         """
     }
 
+    private func changePurpose(to purpose: ModelCapability) {
+        ModelPurposeStore.setPurpose(purpose, for: model)
+        clearIncompatibleDefaults(for: purpose)
+        if purpose.canBeDefault { setDefaultIfSlotEmpty(purpose) }
+        onPurposeChanged()
+    }
+
     private func setDefault(_ capability: ModelCapability) {
-        guard let id = model.id?.uuidString else { return }
+        guard info.capability == capability, let id = model.id?.uuidString else { return }
         switch capability {
         case .text: generationSettings.defaultModelID = id
         case .imageGeneration: generationSettings.defaultImageModelID = id
@@ -335,5 +362,28 @@ private struct ModelLibraryCard: View {
         case .textToSpeech: generationSettings.defaultVoiceOutputModelID = id
         default: break
         }
+    }
+
+    private func setDefaultIfSlotEmpty(_ capability: ModelCapability) {
+        guard let id = model.id?.uuidString else { return }
+        switch capability {
+        case .text:
+            if generationSettings.defaultModelID.isEmpty { generationSettings.defaultModelID = id }
+        case .imageGeneration:
+            if generationSettings.defaultImageModelID.isEmpty { generationSettings.defaultImageModelID = id }
+        case .speechToText:
+            if generationSettings.defaultSpeechToTextModelID.isEmpty { generationSettings.defaultSpeechToTextModelID = id }
+        case .textToSpeech:
+            if generationSettings.defaultVoiceOutputModelID.isEmpty { generationSettings.defaultVoiceOutputModelID = id }
+        default: break
+        }
+    }
+
+    private func clearIncompatibleDefaults(for purpose: ModelCapability) {
+        guard let id = model.id?.uuidString else { return }
+        if purpose != .text && generationSettings.defaultModelID == id { generationSettings.defaultModelID = "" }
+        if purpose != .imageGeneration && generationSettings.defaultImageModelID == id { generationSettings.defaultImageModelID = "" }
+        if purpose != .speechToText && generationSettings.defaultSpeechToTextModelID == id { generationSettings.defaultSpeechToTextModelID = "" }
+        if purpose != .textToSpeech && generationSettings.defaultVoiceOutputModelID == id { generationSettings.defaultVoiceOutputModelID = "" }
     }
 }
