@@ -14,6 +14,8 @@ struct ModelLibraryView: View {
 
     @State private var selectedFilter: ModelCapability = .text
     @State private var showingImporter = false
+    @State private var showingHFHub = false
+    @State private var showingFileTools = false
     @State private var isImporting = false
     @State private var statusText: String?
     @State private var errorText: String?
@@ -27,6 +29,7 @@ struct ModelLibraryView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         header
                         capabilityTabs
+                        sourceButtons
                         modelGrid
                         if isImporting {
                             Label("Importing model… Keep the app open.", systemImage: "hourglass")
@@ -47,7 +50,11 @@ struct ModelLibraryView: View {
                         .disabled(isImporting)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button { showingImporter = true } label: {
+                    Menu {
+                        Button { showingImporter = true } label: { Label("Import Local File", systemImage: "square.and.arrow.down") }
+                        Button { showingHFHub = true } label: { Label("Browse Hugging Face", systemImage: "globe") }
+                        Button { showingFileTools = true } label: { Label("Manage Models Folder", systemImage: "folder") }
+                    } label: {
                         Label("Add", systemImage: "plus")
                     }
                     .disabled(isImporting)
@@ -59,6 +66,14 @@ struct ModelLibraryView: View {
                     importModels(result, purpose: selectedFilter)
                 }
             }
+            .sheet(isPresented: $showingHFHub) {
+                HFHubView(purpose: selectedFilter)
+                    .environmentObject(generationSettings)
+            }
+            .sheet(isPresented: $showingFileTools, onDismiss: { refreshKey = UUID() }) {
+                ModelFolderManagerView(defaultPurpose: selectedFilter)
+                    .environmentObject(generationSettings)
+            }
         }
     }
 
@@ -69,11 +84,35 @@ struct ModelLibraryView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Model Library")
                         .font(.largeTitle.weight(.bold))
-                    Text("Import from a tab to choose the model's purpose. You can change it later from the card menu.")
+                    Text("Import local GGUF files or download from Hugging Face into LocalLLM/Models. Purpose and runtime support are separate.")
                         .font(.subheadline)
                         .foregroundColor(StudioTheme.secondaryText)
                 }
             }
+        }
+    }
+
+    private var sourceButtons: some View {
+        HStack(spacing: 10) {
+            Button { showingImporter = true } label: {
+                Label("Local File", systemImage: "externaldrive.badge.plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isImporting)
+
+            Button { showingHFHub = true } label: {
+                Label("Hugging Face", systemImage: "globe")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+
+            Button { showingFileTools = true } label: {
+                Image(systemName: "folder")
+                    .frame(width: 38)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Manage Models Folder")
         }
     }
 
@@ -89,9 +128,7 @@ struct ModelLibraryView: View {
                             .foregroundColor(selectedFilter == capability ? .white : StudioTheme.secondaryText)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 9)
-                            .background(
-                                Capsule().fill(selectedFilter == capability ? Color.accentColor : StudioTheme.surface)
-                            )
+                            .background(Capsule().fill(selectedFilter == capability ? Color.accentColor : StudioTheme.surface))
                     }
                     .buttonStyle(.plain)
                 }
@@ -102,13 +139,8 @@ struct ModelLibraryView: View {
     private var modelGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 14)], spacing: 14) {
             ForEach(filteredModels) { model in
-                ModelLibraryCard(
-                    model: model,
-                    onPurposeChanged: {
-                        refreshKey = UUID()
-                    }
-                )
-                .environmentObject(generationSettings)
+                ModelLibraryCard(model: model, onPurposeChanged: { refreshKey = UUID() })
+                    .environmentObject(generationSettings)
             }
 
             if filteredModels.isEmpty {
@@ -131,6 +163,14 @@ struct ModelLibraryView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(isImporting)
+                        Button { showingHFHub = true } label: {
+                            Label("Browse Hugging Face", systemImage: "globe")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 13)
+                                .background(RoundedRectangle(cornerRadius: 14).fill(StudioTheme.surface))
+                        }
+                        .buttonStyle(.plain)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -150,11 +190,11 @@ struct ModelLibraryView: View {
 
     private var emptyStateText: String {
         switch selectedFilter {
-        case .imageGeneration: return "Import from this tab to save the model as Image Generation, even if its filename does not look like an image model. A dedicated image backend is still required to render pixels."
-        case .speechToText: return "Import from this tab to save the model as Speech-to-Text."
-        case .textToSpeech: return "Import from this tab to save the model as Text-to-Speech."
-        case .vision: return "Import from this tab to save the model as Vision. Image uploads still wait for a vision backend."
-        default: return "Import from this tab to save the model with this purpose."
+        case .imageGeneration: return "Download or import image models here. They stay organized, but still need an image backend before rendering pixels."
+        case .speechToText: return "Download or import speech models here. They stay organized, but still need a speech backend before running."
+        case .textToSpeech: return "Download or import voice models here. They stay organized, but still need a voice backend before running."
+        case .vision: return "Download or import vision models here. They stay organized, but still need a vision backend before running."
+        default: return "Import a local file or download a model from Hugging Face into the Models folder."
         }
     }
 
@@ -181,12 +221,7 @@ struct ModelLibraryView: View {
                         do {
                             var count = 0
                             for item in importedItems {
-                                let model = try PersistenceController.shared.upsertModel(
-                                    from: item.bookmark,
-                                    displayName: item.displayName,
-                                    originalPath: item.originalPath,
-                                    fileSize: item.fileSize
-                                )
+                                let model = try PersistenceController.shared.upsertModel(from: item.bookmark, displayName: item.displayName, originalPath: item.originalPath, fileSize: item.fileSize)
                                 ModelPurposeStore.setPurpose(purpose, for: model)
                                 setDefaultIfNeeded(model, purpose: purpose)
                                 count += 1
@@ -201,10 +236,7 @@ struct ModelLibraryView: View {
                         }
                     }
                 } catch {
-                    await MainActor.run {
-                        errorText = error.localizedDescription
-                        isImporting = false
-                    }
+                    await MainActor.run { errorText = error.localizedDescription; isImporting = false }
                 }
             }
         } catch {
@@ -216,16 +248,11 @@ struct ModelLibraryView: View {
     private func setDefaultIfNeeded(_ model: ModelReferenceEntity, purpose: ModelCapability) {
         guard let id = model.id?.uuidString else { return }
         switch purpose {
-        case .text:
-            if generationSettings.defaultModelID.isEmpty { generationSettings.defaultModelID = id }
-        case .imageGeneration:
-            if generationSettings.defaultImageModelID.isEmpty { generationSettings.defaultImageModelID = id }
-        case .speechToText:
-            if generationSettings.defaultSpeechToTextModelID.isEmpty { generationSettings.defaultSpeechToTextModelID = id }
-        case .textToSpeech:
-            if generationSettings.defaultVoiceOutputModelID.isEmpty { generationSettings.defaultVoiceOutputModelID = id }
-        default:
-            break
+        case .text: if generationSettings.defaultModelID.isEmpty { generationSettings.defaultModelID = id }
+        case .imageGeneration: if generationSettings.defaultImageModelID.isEmpty { generationSettings.defaultImageModelID = id }
+        case .speechToText: if generationSettings.defaultSpeechToTextModelID.isEmpty { generationSettings.defaultSpeechToTextModelID = id }
+        case .textToSpeech: if generationSettings.defaultVoiceOutputModelID.isEmpty { generationSettings.defaultVoiceOutputModelID = id }
+        default: break
         }
     }
 }
@@ -235,9 +262,8 @@ private struct ModelLibraryCard: View {
     @ObservedObject var model: ModelReferenceEntity
     let onPurposeChanged: () -> Void
 
-    private var info: ModelCapabilityInfo {
-        ModelCapabilityInfo.resolve(for: model)
-    }
+    private var info: ModelCapabilityInfo { ModelCapabilityInfo.resolve(for: model) }
+    private var runtime: ModelRuntimeSupport { ModelRuntimeSupport.resolve(purpose: info.capability, fileName: model.displayName ?? "", fileSize: model.fileSize) }
 
     var body: some View {
         StudioGlassCard(cornerRadius: 22, borderColor: borderColor) {
@@ -252,51 +278,51 @@ private struct ModelLibraryCard: View {
                             }
                         }
                         Divider()
-                        Button("Set as Default Chat Model") { setDefault(.text) }
-                            .disabled(info.capability != .text)
-                        Button("Set as Default Image Model") { setDefault(.imageGeneration) }
-                            .disabled(info.capability != .imageGeneration)
-                        Button("Set as Default Speech-to-Text") { setDefault(.speechToText) }
-                            .disabled(info.capability != .speechToText)
-                        Button("Set as Default Voice Output") { setDefault(.textToSpeech) }
-                            .disabled(info.capability != .textToSpeech)
+                        Button("Set as Default Chat Model") { setDefault(.text) }.disabled(info.capability != .text)
+                        Button("Set as Default Image Model") { setDefault(.imageGeneration) }.disabled(info.capability != .imageGeneration)
+                        Button("Set as Default Speech-to-Text") { setDefault(.speechToText) }.disabled(info.capability != .speechToText)
+                        Button("Set as Default Voice Output") { setDefault(.textToSpeech) }.disabled(info.capability != .textToSpeech)
                         Divider()
                         Button("Copy Diagnostics") { UIPasteboard.general.string = diagnostics }
                     } label: {
-                        Image(systemName: "ellipsis")
-                            .foregroundColor(StudioTheme.secondaryText)
-                            .padding(6)
+                        Image(systemName: "ellipsis").foregroundColor(StudioTheme.secondaryText).padding(6)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(model.displayName ?? "Model")
-                        .font(.headline)
-                        .lineLimit(2)
+                    Text(model.displayName ?? "Model").font(.headline).lineLimit(2)
                     Text("\(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file)) • \(info.architecture) • \(info.quantization)")
-                        .font(.caption)
-                        .foregroundColor(StudioTheme.secondaryText)
-                        .lineLimit(1)
+                        .font(.caption).foregroundColor(StudioTheme.secondaryText).lineLimit(1)
                 }
 
                 HStack(spacing: 6) {
                     StudioBadge(title: info.capability.title, color: .accentColor)
+                    StudioBadge(title: runtime.title, color: runtimeColor)
                     StudioBadge(title: info.compatibility.title, color: badgeColor)
                 }
 
+                Text(runtime.detail)
+                    .font(.caption)
+                    .foregroundColor(runtimeColor)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 if let warning = info.warning {
-                    Text(warning)
-                        .font(.caption)
-                        .foregroundColor(badgeColor)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(warning).font(.caption).foregroundColor(badgeColor).fixedSize(horizontal: false, vertical: true)
                 }
 
                 if isAnyDefault {
-                    Label(defaultText, systemImage: "checkmark.seal.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(StudioTheme.success)
+                    Label(defaultText, systemImage: "checkmark.seal.fill").font(.caption.weight(.semibold)).foregroundColor(StudioTheme.success)
                 }
             }
+        }
+    }
+
+    private var runtimeColor: Color {
+        switch runtime {
+        case .runsNow: return StudioTheme.success
+        case .tooLarge, .unsupportedFormat: return StudioTheme.danger
+        case .needsImageBackend, .needsSpeechBackend, .needsVoiceBackend, .needsVisionBackend: return StudioTheme.warning
+        case .unknown: return StudioTheme.secondaryText
         }
     }
 
@@ -319,10 +345,7 @@ private struct ModelLibraryCard: View {
 
     private var isAnyDefault: Bool {
         let id = model.id?.uuidString ?? ""
-        return generationSettings.defaultModelID == id ||
-        generationSettings.defaultImageModelID == id ||
-        generationSettings.defaultSpeechToTextModelID == id ||
-        generationSettings.defaultVoiceOutputModelID == id
+        return generationSettings.defaultModelID == id || generationSettings.defaultImageModelID == id || generationSettings.defaultSpeechToTextModelID == id || generationSettings.defaultVoiceOutputModelID == id
     }
 
     private var defaultText: String {
@@ -339,6 +362,7 @@ private struct ModelLibraryCard: View {
         Model: \(model.displayName ?? "Unknown")
         Size: \(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file))
         Purpose: \(info.capability.title)
+        Runtime: \(runtime.title)
         Architecture: \(info.architecture)
         Quantization: \(info.quantization)
         Compatibility: \(info.compatibility.title)
@@ -367,14 +391,10 @@ private struct ModelLibraryCard: View {
     private func setDefaultIfSlotEmpty(_ capability: ModelCapability) {
         guard let id = model.id?.uuidString else { return }
         switch capability {
-        case .text:
-            if generationSettings.defaultModelID.isEmpty { generationSettings.defaultModelID = id }
-        case .imageGeneration:
-            if generationSettings.defaultImageModelID.isEmpty { generationSettings.defaultImageModelID = id }
-        case .speechToText:
-            if generationSettings.defaultSpeechToTextModelID.isEmpty { generationSettings.defaultSpeechToTextModelID = id }
-        case .textToSpeech:
-            if generationSettings.defaultVoiceOutputModelID.isEmpty { generationSettings.defaultVoiceOutputModelID = id }
+        case .text: if generationSettings.defaultModelID.isEmpty { generationSettings.defaultModelID = id }
+        case .imageGeneration: if generationSettings.defaultImageModelID.isEmpty { generationSettings.defaultImageModelID = id }
+        case .speechToText: if generationSettings.defaultSpeechToTextModelID.isEmpty { generationSettings.defaultSpeechToTextModelID = id }
+        case .textToSpeech: if generationSettings.defaultVoiceOutputModelID.isEmpty { generationSettings.defaultVoiceOutputModelID = id }
         default: break
         }
     }
