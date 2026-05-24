@@ -200,20 +200,28 @@ final class GenerationSettings: ObservableObject {
     static let defaultSystemMessage = "Answer only as the assistant. Be direct and helpful. Do not write messages for the user. Do not continue the conversation as a script. Do not output role labels."
 }
 
-enum GenerationMode: String, CaseIterable, Identifiable, Sendable {
+enum GenerationMode: String, CaseIterable, Identifiable, Hashable, Sendable {
     case auto
     case manual
 
     var id: String { rawValue }
-    var title: String { self == .auto ? "Auto Recommended" : "Manual Advanced" }
+
+    var title: String {
+        switch self {
+        case .auto: return "Auto Recommended"
+        case .manual: return "Manual Advanced"
+        }
+    }
+
     var subtitle: String {
-        self == .auto
-        ? "Adjusts prompt length, history, and output size for the selected model."
-        : "Uses your custom sampling settings."
+        switch self {
+        case .auto: return "Adjusts prompt length, history, and output size for the selected model."
+        case .manual: return "Uses your custom sampling settings."
+        }
     }
 }
 
-enum PromptStyle: String, CaseIterable, Identifiable, Sendable {
+enum PromptStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
     case auto
     case raw
     case simple
@@ -248,7 +256,7 @@ enum PromptStyle: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum ReasoningMode: String, CaseIterable, Identifiable, Sendable {
+enum ReasoningMode: String, CaseIterable, Identifiable, Hashable, Sendable {
     case auto
     case off
     case fast
@@ -286,7 +294,7 @@ enum ReasoningMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum ReasoningDisplayMode: String, CaseIterable, Identifiable, Sendable {
+enum ReasoningDisplayMode: String, CaseIterable, Identifiable, Hashable, Sendable {
     case hidden
     case summary
     case full
@@ -301,7 +309,7 @@ enum ReasoningDisplayMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum LiveDisplayMode: String, CaseIterable, Identifiable, Sendable {
+enum LiveDisplayMode: String, CaseIterable, Identifiable, Hashable, Sendable {
     case smoothLive
     case rawStream
     case instant
@@ -335,7 +343,7 @@ struct EffectiveGenerationSettings: Sendable {
 }
 
 struct GenerationProfile: Sendable {
-    enum Kind: String, Sendable {
+    enum Kind: String, Hashable, Sendable {
         case small
         case medium
         case large
