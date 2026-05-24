@@ -29,6 +29,42 @@ enum ModelFileAccess {
         }.value
     }
 
+    static func visibleModelsDirectory() throws -> URL {
+        let fileManager = FileManager.default
+        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            throw ImportError.fileMissing(URL(fileURLWithPath: "Documents"))
+        }
+
+        let modelsURL = documentsURL.appendingPathComponent("Models", isDirectory: true)
+        try fileManager.createDirectory(at: modelsURL, withIntermediateDirectories: true)
+        return modelsURL
+    }
+
+    static func visibleModelFileURLs() throws -> [URL] {
+        let directory = try visibleModelsDirectory()
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        return urls
+            .filter { $0.pathExtension.lowercased() == "gguf" }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    }
+
+    static func makeBookmarkForVisibleModel(at url: URL) throws -> Data {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw ImportError.fileMissing(url)
+        }
+
+        return try url.bookmarkData(
+            options: [],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+    }
+
     /// Store the selected model in app-owned storage and create a bookmark to it.
     ///
     /// The UIKit picker is opened with `asCopy: true`, so iOS usually gives the app
