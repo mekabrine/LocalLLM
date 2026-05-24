@@ -26,8 +26,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mekabrine.localllm
-        MARKETING_VERSION: "1.10"
-        CURRENT_PROJECT_VERSION: "11"
+        MARKETING_VERSION: "1.11"
+        CURRENT_PROJECT_VERSION: "12"
         SWIFT_VERSION: "5.0"
     dependencies:
       - package: SwiftLlama
