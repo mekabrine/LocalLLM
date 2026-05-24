@@ -69,7 +69,7 @@ struct SettingsView: View {
                     .disabled(isImporting)
                 }
 
-                Section(header: Text("Models"), footer: Text("Imported GGUF files are copied into app storage so the app can reopen them reliably after relaunch.")) {
+                Section(header: Text("Models"), footer: Text("Put large .gguf files in Files → On My iPhone → LocalGGUFChat → Models, then tap Scan Models Folder. This avoids copying 1GB+ files through the picker.")) {
                     if models.isEmpty {
                         Text("No imported models yet.")
                             .foregroundColor(.secondary)
@@ -99,6 +99,13 @@ struct SettingsView: View {
                             .padding(.vertical, 2)
                         }
                     }
+
+                    Button {
+                        scanVisibleModelsFolder()
+                    } label: {
+                        Label("Scan Models Folder", systemImage: "folder.badge.gearshape")
+                    }
+                    .disabled(isImporting)
 
                     Button {
                         showingImporter = true
@@ -140,12 +147,56 @@ struct SettingsView: View {
                         .disabled(isImporting)
                 }
             }
+            .onAppear {
+                ensureVisibleModelsFolderExists()
+            }
             .sheet(isPresented: $showingImporter) {
                 ModelDocumentPicker(allowsMultipleSelection: true) { result in
                     showingImporter = false
                     importModels(result)
                 }
             }
+        }
+    }
+
+    private func ensureVisibleModelsFolderExists() {
+        do {
+            _ = try ModelFileAccess.visibleModelsDirectory()
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    private func scanVisibleModelsFolder() {
+        do {
+            let urls = try ModelFileAccess.visibleModelFileURLs()
+            guard !urls.isEmpty else {
+                importStatus = "No .gguf files found in LocalGGUFChat/Models."
+                errorText = nil
+                return
+            }
+
+            var count = 0
+            for url in urls {
+                let bookmark = try ModelFileAccess.makeBookmarkForVisibleModel(at: url)
+                let model = try PersistenceController.shared.upsertModel(
+                    from: bookmark,
+                    displayName: ModelFileAccess.displayName(for: url),
+                    originalPath: url.path,
+                    fileSize: ModelFileAccess.fileSize(at: url)
+                )
+
+                if generationSettings.defaultModelID.isEmpty, let id = model.id {
+                    generationSettings.defaultModelID = id.uuidString
+                }
+
+                count += 1
+            }
+
+            importStatus = count == 1 ? "Added 1 model from Models folder." : "Added \(count) models from Models folder."
+            errorText = nil
+        } catch {
+            errorText = error.localizedDescription
         }
     }
 
