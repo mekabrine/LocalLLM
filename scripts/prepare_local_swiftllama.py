@@ -3,8 +3,8 @@ import re
 import shutil
 import subprocess
 
-VERSION = '1.24'
-BUILD = '25'
+VERSION = '1.25'
+BUILD = '26'
 PACKAGE_DIR = Path('LocalPackages/SwiftLlama')
 
 if PACKAGE_DIR.exists():
@@ -19,15 +19,13 @@ subprocess.run([
 model_path = PACKAGE_DIR / 'Sources/SwiftLlama/LlamaModel.swift'
 text = model_path.read_text()
 
-text = text.replace('    private let model: Model\n', '    private let model: Model\n    private let vocab: OpaquePointer\n')
-text = re.sub(r'(\s*self\.model = model\s*\n)', r'\1        self.vocab = llama_model_get_vocab(model)\n', text, count=1)
 text = text.replace('        llama_backend_init()\n', '        _ = LlamaBackend.once\n')
 text = text.replace('        llama_backend_free()\n', '')
-text = text.replace('llama_token_is_eog(model, newToken)', 'llama_token_is_eog(vocab, newToken)')
-text = text.replace('llama_token_to_piece(model, token, &piece, length, 0, false)', 'llama_token_to_piece(vocab, token, &piece, length, 0, false)')
-text = text.replace('llama_token_to_piece(model, token, base, cap, 0, false)', 'llama_token_to_piece(vocab, token, base, cap, 0, false)')
 text = text.replace('tokens = tokenize(text: prompt.prompt, addBos: true)', 'tokens = try tokenize(text: prompt.prompt, addBos: true)')
-text = text.replace('        tokens = try tokenize(text: prompt.prompt, addBos: true)\n', '        tokens = try tokenize(text: prompt.prompt, addBos: true)\n        guard !tokens.isEmpty else { throw SwiftLlamaError.others("Prompt tokenization produced no tokens") }\n')
+text = text.replace(
+    '        tokens = try tokenize(text: prompt.prompt, addBos: true)\n\n        batch.clear()\n',
+    '        tokens = try tokenize(text: prompt.prompt, addBos: true)\n        guard !tokens.isEmpty else { throw SwiftLlamaError.others("Prompt tokenization produced no tokens") }\n\n        batch.clear()\n'
+)
 
 if 'private enum LlamaBackend' not in text:
     text = text.replace(
@@ -37,23 +35,17 @@ if 'private enum LlamaBackend' not in text:
 
 safe_tokenize = '''    private func tokenize(text: String, addBos: Bool) throws -> [Token] {
         let byteCount = Int32(text.utf8.count)
-        let needed = text.withCString { cText in
-            llama_tokenize(vocab, cText, byteCount, nil, 0, addBos, false)
-        }
+        let needed = llama_tokenize(model, text, byteCount, nil, 0, addBos, false)
         var capacity = max(needed < 0 ? Int(-needed) : Int(needed), 8)
         var tokens = [Token](repeating: 0, count: capacity)
-        var count = text.withCString { cText in
-            tokens.withUnsafeMutableBufferPointer { buffer in
-                llama_tokenize(vocab, cText, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
-            }
+        var count = tokens.withUnsafeMutableBufferPointer { buffer in
+            llama_tokenize(model, text, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
         }
         if count < 0 {
             capacity = max(Int(-count), capacity * 2, 8)
             tokens = [Token](repeating: 0, count: capacity)
-            count = text.withCString { cText in
-                tokens.withUnsafeMutableBufferPointer { buffer in
-                    llama_tokenize(vocab, cText, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
-                }
+            count = tokens.withUnsafeMutableBufferPointer { buffer in
+                llama_tokenize(model, text, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
             }
         }
         guard count > 0 else { throw SwiftLlamaError.others("Prompt tokenization failed") }
@@ -69,8 +61,8 @@ text, count = re.subn(
 )
 if count != 1:
     raise SystemExit('Failed to patch SwiftLlama tokenizer')
-if 'self.vocab = llama_model_get_vocab(model)' not in text:
-    raise SystemExit('Failed to initialize SwiftLlama vocab')
+if 'llama_model_get_vocab' in text or 'private let vocab' in text:
+    raise SystemExit('Generated SwiftLlama patch uses unavailable vocab API')
 model_path.write_text(text)
 
 prompt_path = PACKAGE_DIR / 'Sources/SwiftLlama/Models/Prompt.swift'
