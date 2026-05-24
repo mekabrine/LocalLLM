@@ -338,9 +338,10 @@ struct ChatView: View {
             let systemMessage = await MainActor.run { generationSettings.combinedSystemMessage(for: chat.id) }
             let liveDisplay = await MainActor.run { generationSettings.liveDisplayMode }
             let typingSpeed = await MainActor.run { generationSettings.typingCharactersPerSecond }
+            let history = await MainActor.run { messages.map(Message.init) }
 
             await MainActor.run {
-                assistantEntity.text = thinkingText(for: effective.reasoningMode)
+                assistantEntity.text = thinkingText(for: effective.reasoningMode, display: effective.reasoningDisplay)
                 displayDriver = ResponseDisplayDriver(
                     message: assistantEntity,
                     mode: liveDisplay,
@@ -348,10 +349,9 @@ struct ChatView: View {
                 )
             }
 
-            try await ModelFileAccess.withSecurityScopedURLAsync(bookmark: model.bookmark) { url in
+            let finalOutput = try await ModelFileAccess.withSecurityScopedURLAsync(bookmark: model.bookmark) { url -> String in
                 try await engine.load(modelURL: url)
 
-                let history = messages.map(Message.init)
                 let prompt = PromptBuilder.build(
                     messages: history,
                     systemMessage: systemMessage,
@@ -383,18 +383,15 @@ struct ChatView: View {
                     }
                 }
 
-                await MainActor.run {
-                    let finalText = visibleBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let textToSave = finalText.isEmpty ? "No response." : finalText
-                    Task { @MainActor in
-                        await displayDriver?.finish(finalText: textToSave)
-                        chat.updatedAt = Date()
-                        PersistenceController.shared.save()
-                    }
-                }
+                return visibleBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
             }
 
+            let textToSave = finalOutput.isEmpty ? "No response." : finalOutput
+            await displayDriver?.finish(finalText: textToSave)
+
             await MainActor.run {
+                chat.updatedAt = Date()
+                PersistenceController.shared.save()
                 isGenerating = false
                 generationTask = nil
             }
@@ -415,7 +412,9 @@ struct ChatView: View {
         }
     }
 
-    private func thinkingText(for mode: ReasoningMode) -> String {
+    private func thinkingText(for mode: ReasoningMode, display: ReasoningDisplayMode) -> String {
+        guard display != .hidden else { return "" }
+
         switch mode {
         case .deep:
             return "Thinking deeply…"
