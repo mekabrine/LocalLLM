@@ -1,41 +1,136 @@
 import Foundation
 
 enum PromptBuilder {
-    private static let maxMessages = 8
-    private static let maxPromptCharacters = 3_000
+    static func build(
+        messages: [Message],
+        systemMessage: String,
+        effectiveSettings: EffectiveGenerationSettings
+    ) -> String {
+        let cleanedMessages = messages
+            .map { Message(role: $0.role, text: clean($0.text)) }
+            .filter { !$0.text.isEmpty }
 
-    static func build(messages: [Message]) -> String {
-        var lines: [String] = [
-            "You are a helpful on-device assistant. Answer only as the assistant.",
-            "Do not write labels like User:, Human:, or Assistant: in your answer.",
-            "Do not continue the conversation for the person.",
-            "",
-            "Conversation:"
-        ]
+        let latestUserText = cleanedMessages.last(where: { $0.role == .user })?.text ?? ""
+        let trimmedSystem = clean(systemMessage)
+        let reasoning = reasoningInstruction(for: effectiveSettings.reasoningMode)
 
-        for message in messages.suffix(maxMessages) {
-            let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { continue }
+        let prompt: String
+        switch effectiveSettings.promptStyle {
+        case .raw:
+            prompt = rawPrompt(system: trimmedSystem, reasoning: reasoning, latestUserText: latestUserText)
+        case .simple, .auto:
+            prompt = simplePrompt(
+                messages: cleanedMessages,
+                system: trimmedSystem,
+                reasoning: reasoning,
+                latestUserText: latestUserText,
+                historyLimit: effectiveSettings.historyLimit
+            )
+        case .instruct:
+            prompt = instructPrompt(
+                messages: cleanedMessages,
+                system: trimmedSystem,
+                reasoning: reasoning,
+                latestUserText: latestUserText,
+                historyLimit: effectiveSettings.historyLimit
+            )
+        }
 
+        return trim(prompt, to: effectiveSettings.promptCharacterLimit)
+    }
+
+    private static func rawPrompt(system: String, reasoning: String, latestUserText: String) -> String {
+        var parts: [String] = []
+        if !system.isEmpty { parts.append(system) }
+        if !reasoning.isEmpty { parts.append(reasoning) }
+        parts.append(latestUserText)
+        return parts.joined(separator: "\n\n")
+    }
+
+    private static func simplePrompt(
+        messages: [Message],
+        system: String,
+        reasoning: String,
+        latestUserText: String,
+        historyLimit: Int
+    ) -> String {
+        var lines: [String] = []
+        if !system.isEmpty { lines.append(system) }
+        if !reasoning.isEmpty { lines.append(reasoning) }
+
+        let recent = previousContext(from: messages, limit: historyLimit)
+        if !recent.isEmpty {
+            lines.append("Helpful context from earlier:")
+            lines.append(recent)
+        }
+
+        lines.append("Answer this directly:")
+        lines.append(latestUserText)
+        return lines.joined(separator: "\n\n")
+    }
+
+    private static func instructPrompt(
+        messages: [Message],
+        system: String,
+        reasoning: String,
+        latestUserText: String,
+        historyLimit: Int
+    ) -> String {
+        var instruction = system
+        if !reasoning.isEmpty {
+            instruction += instruction.isEmpty ? reasoning : "\n" + reasoning
+        }
+
+        let recent = previousContext(from: messages, limit: historyLimit)
+        if !recent.isEmpty {
+            instruction += instruction.isEmpty ? "Helpful context:\n\(recent)" : "\n\nHelpful context:\n\(recent)"
+        }
+
+        if instruction.isEmpty {
+            instruction = "Answer directly and only as the assistant."
+        }
+
+        return "Instruction:\n\(instruction)\n\nInput:\n\(latestUserText)\n\nAnswer:"
+    }
+
+    private static func previousContext(from messages: [Message], limit: Int) -> String {
+        guard limit > 1 else { return "" }
+
+        let nonEmpty = messages.filter { !$0.text.isEmpty }
+        guard nonEmpty.count > 1 else { return "" }
+
+        let contextMessages = nonEmpty.dropLast().suffix(max(0, limit - 1))
+        return contextMessages.map { message in
             switch message.role {
             case .user:
-                lines.append("Person message:")
-                lines.append(text)
+                return "Earlier request: \(message.text)"
             case .assistant:
-                lines.append("Assistant answer:")
-                lines.append(text)
+                return "Earlier answer: \(message.text)"
             }
-            lines.append("")
+        }.joined(separator: "\n")
+    }
+
+    private static func reasoningInstruction(for mode: ReasoningMode) -> String {
+        switch mode {
+        case .auto, .off:
+            return ""
+        case .fast:
+            return "Think briefly, then give only the final answer."
+        case .balanced:
+            return "Use a short internal plan before answering, but do not show the plan."
+        case .deep:
+            return "Think carefully and check the answer before responding, but show only the final answer."
         }
+    }
 
-        lines.append("Write the next assistant answer:")
-        let prompt = lines.joined(separator: "\n")
+    private static func clean(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{0000}", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
-        if prompt.count <= maxPromptCharacters {
-            return prompt
-        }
-
-        let start = prompt.index(prompt.endIndex, offsetBy: -maxPromptCharacters)
+    private static func trim(_ prompt: String, to limit: Int) -> String {
+        guard limit > 0, prompt.count > limit else { return prompt }
+        let start = prompt.index(prompt.endIndex, offsetBy: -limit)
         return String(prompt[start...])
     }
 }
