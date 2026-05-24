@@ -2,27 +2,32 @@ import Foundation
 
 enum GenerationOutputFilter {
     private static let builtInStops = [
-        "\nUser:", "\nHuman:", "\nAssistant:",
-        "User:", "Human:", "Assistant:",
-        "Person message:", "Assistant answer:", "Conversation:",
-        "<|user|>", "<|assistant|>",
-        "### Instruction", "### Response", "### Input"
+        "<|user|>", "<|assistant|>", "<|system|>",
+        "### Instruction", "### Response", "### Input",
+        "Person message:", "Assistant answer:", "Conversation:"
     ]
 
-    static func filteredText(from rawText: String, userStops: [String]) -> (text: String, shouldStop: Bool) {
-        let stops = (userStops + builtInStops)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+    private static let roleLabelPattern = #"(?im)^\s*(user|human|person|assistant|ai|bot|reply|question)\s*:"#
 
+    static func filteredText(from rawText: String, userStops: [String]) -> (text: String, shouldStop: Bool) {
         guard !rawText.isEmpty else { return (rawText, false) }
 
         var bestRange: Range<String.Index>?
-        for stop in stops {
+
+        for stop in userStops.map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).filter({ !$0.isEmpty }) {
             if let range = rawText.range(of: stop, options: [.caseInsensitive]) {
-                if bestRange == nil || range.lowerBound < bestRange!.lowerBound {
-                    bestRange = range
-                }
+                bestRange = earliest(bestRange, range)
             }
+        }
+
+        for stop in builtInStops {
+            if let range = rawText.range(of: stop, options: [.caseInsensitive]) {
+                bestRange = earliest(bestRange, range)
+            }
+        }
+
+        if let range = rawText.range(of: roleLabelPattern, options: [.regularExpression]) {
+            bestRange = earliest(bestRange, range)
         }
 
         if let bestRange {
@@ -32,5 +37,10 @@ enum GenerationOutputFilter {
         }
 
         return (rawText, false)
+    }
+
+    private static func earliest(_ current: Range<String.Index>?, _ candidate: Range<String.Index>) -> Range<String.Index> {
+        guard let current else { return candidate }
+        return candidate.lowerBound < current.lowerBound ? candidate : current
     }
 }
