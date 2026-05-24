@@ -14,6 +14,7 @@ struct SettingsView: View {
     private var models: FetchedResults<ModelReferenceEntity>
 
     @State private var showingImporter = false
+    @State private var showingModelLibrary = false
     @State private var isImporting = false
     @State private var importStatus: String?
     @State private var errorText: String?
@@ -26,6 +27,11 @@ struct SettingsView: View {
                 generationModeSection
                 generationControlsSection
                 liveDisplaySection
+                modelDefaultsSection
+                fileSection
+                imageGenerationSection
+                voiceSection
+                diagnosticsSection
                 modelsSection
                 onboardingSection
                 aboutSection
@@ -39,24 +45,27 @@ struct SettingsView: View {
                         .disabled(isImporting)
                 }
             }
-            .onAppear {
-                ensureVisibleModelsFolderExists()
-            }
+            .onAppear { ensureVisibleModelsFolderExists() }
             .sheet(isPresented: $showingImporter) {
                 ModelDocumentPicker(allowsMultipleSelection: true) { result in
                     showingImporter = false
                     importModels(result)
                 }
             }
+            .sheet(isPresented: $showingModelLibrary) {
+                ModelLibraryView()
+                    .environment(\.managedObjectContext, PersistenceController.shared.viewContext)
+                    .environmentObject(generationSettings)
+            }
         }
     }
 
     private var introSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Label("LocalLLM", systemImage: "sparkles")
                     .font(.title2.weight(.bold))
-                Text("Private local chats powered by GGUF models on this device.")
+                Text("Private local AI studio for chat, files, voice routing, image-generation routing, diagnostics, and local GGUF models.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -65,7 +74,7 @@ struct SettingsView: View {
     }
 
     private var assistantBehaviorSection: some View {
-        Section(header: Text("Assistant Behavior"), footer: Text("The default system message applies to new and existing chats unless a chat adds its own instructions.")) {
+        Section(header: Text("Assistant Behavior"), footer: Text("Small Model Protection uses plain prompts and disables reasoning for tiny models to reduce prompt continuation.")) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Default System Message")
                 TextEditor(text: $generationSettings.globalSystemMessage)
@@ -81,6 +90,8 @@ struct SettingsView: View {
                     Text(style.title).tag(style)
                 }
             }
+
+            Toggle("Small Model Protection", isOn: $generationSettings.smallModelProtection)
 
             Picker("Reasoning", selection: $generationSettings.reasoningMode) {
                 ForEach(ReasoningMode.allCases) { mode in
@@ -99,6 +110,7 @@ struct SettingsView: View {
                 generationSettings.promptStyle = .auto
                 generationSettings.reasoningMode = .auto
                 generationSettings.reasoningDisplay = .hidden
+                generationSettings.smallModelProtection = true
             }
         }
     }
@@ -111,6 +123,8 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
+
+            Toggle("Large Model Survival Mode", isOn: $generationSettings.largeModelSurvivalMode)
 
             if let defaultModel {
                 let profile = GenerationProfile.profile(forFileSize: defaultModel.fileSize)
@@ -134,9 +148,7 @@ struct SettingsView: View {
         if generationSettings.generationMode == .manual {
             Section(header: Text("Manual Generation"), footer: Text("Temperature controls creativity. Higher values are more varied; lower values are more predictable.")) {
                 ForEach(GenerationPreset.all) { preset in
-                    Button {
-                        generationSettings.applyPreset(preset)
-                    } label: {
+                    Button { generationSettings.applyPreset(preset) } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(preset.title)
@@ -199,10 +211,8 @@ struct SettingsView: View {
                 }
             }
 
-            Button("Reset Generation Defaults") {
-                generationSettings.resetSamplingDefaults()
-            }
-            .disabled(isImporting)
+            Button("Reset Generation Defaults") { generationSettings.resetSamplingDefaults() }
+                .disabled(isImporting)
         }
     }
 
@@ -227,37 +237,114 @@ struct SettingsView: View {
         }
     }
 
+    private var modelDefaultsSection: some View {
+        Section(header: Text("Default Models"), footer: Text("Each feature uses its own model slot. Text GGUF models are not automatically image or voice models.")) {
+            Picker("Chat Model", selection: $generationSettings.defaultModelID) {
+                Text("None").tag("")
+                ForEach(modelsMatching(.text)) { model in
+                    Text(model.displayName ?? "Model").tag(model.id?.uuidString ?? "")
+                }
+            }
+
+            Picker("Image Model", selection: $generationSettings.defaultImageModelID) {
+                Text("None").tag("")
+                ForEach(modelsMatching(.imageGeneration)) { model in
+                    Text(model.displayName ?? "Image Model").tag(model.id?.uuidString ?? "")
+                }
+            }
+
+            Picker("Speech-to-Text", selection: $generationSettings.defaultSpeechToTextModelID) {
+                Text("System Speech").tag("")
+                ForEach(modelsMatching(.speechToText)) { model in
+                    Text(model.displayName ?? "Speech Model").tag(model.id?.uuidString ?? "")
+                }
+            }
+
+            Picker("Voice Output", selection: $generationSettings.defaultVoiceOutputModelID) {
+                Text("System Voice").tag("")
+                ForEach(modelsMatching(.textToSpeech)) { model in
+                    Text(model.displayName ?? "Voice Model").tag(model.id?.uuidString ?? "")
+                }
+            }
+
+            Button { showingModelLibrary = true } label: {
+                Label("Open Model Library", systemImage: "library.fill")
+            }
+        }
+    }
+
+    private var fileSection: some View {
+        Section(header: Text("Files"), footer: Text("Text, code, CSV, JSON, Markdown, and PDFs can be attached. Image uploads stay disabled until vision support is added.")) {
+            Picker("File Handling", selection: $generationSettings.fileHandlingMode) {
+                ForEach(FileHandlingMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            Label("Supported: TXT, MD, JSON, CSV, PDF, Swift, Python, JS, HTML, CSS, logs", systemImage: "doc.text")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var imageGenerationSection: some View {
+        Section(header: Text("Image Generation"), footer: Text("The composer toggle and model routing are ready. A dedicated local image backend still needs to be connected before images can render.")) {
+            Toggle("Enable by Default", isOn: $generationSettings.imageGenerationEnabledByDefault)
+
+            Picker("Image Size", selection: $generationSettings.imageSize) {
+                ForEach(ImageGenerationSize.allCases) { size in
+                    Text(size.title).tag(size)
+                }
+            }
+
+            Picker("Quality", selection: $generationSettings.imageQuality) {
+                ForEach(ImageGenerationQuality.allCases) { quality in
+                    Text(quality.title).tag(quality)
+                }
+            }
+        }
+    }
+
+    private var voiceSection: some View {
+        Section(header: Text("Voice"), footer: Text("Voice controls are prepared for local/system speech input and output. Local model inference requires dedicated STT/TTS backends.")) {
+            Picker("Voice Input", selection: $generationSettings.voiceInputMode) {
+                ForEach(VoiceInputMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+
+            Picker("Voice Output", selection: $generationSettings.voiceOutputMode) {
+                ForEach(VoiceOutputMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+        }
+    }
+
+    private var diagnosticsSection: some View {
+        Section(header: Text("Diagnostics"), footer: Text("Detailed errors show the stage, model size, compatibility, raw backend error, and suggested fixes.")) {
+            Toggle("Detailed Errors", isOn: $generationSettings.detailedErrors)
+            Toggle("Show Prompt Preview", isOn: $generationSettings.showPromptPreview)
+        }
+    }
+
     private var modelsSection: some View {
-        Section(header: Text("Models"), footer: Text("Put large .gguf files in Files → On My iPhone → LocalGGUFChat → Models, then tap Scan Models Folder. This avoids copying 1GB+ files through the picker.")) {
+        Section(header: Text("Import"), footer: Text("Put large .gguf files in Files → On My iPhone → LocalLLM → Models, then tap Scan Models Folder. This avoids copying 1GB+ files through the picker.")) {
             if models.isEmpty {
                 Text("No imported models yet.")
                     .foregroundColor(.secondary)
             } else {
-                Picker("Default model", selection: $generationSettings.defaultModelID) {
-                    Text("None").tag("")
-                    ForEach(models) { model in
-                        Text(model.displayName ?? "Model")
-                            .tag(model.id?.uuidString ?? "")
-                    }
-                }
-                .disabled(isImporting)
-
                 ForEach(models) { model in
                     modelRow(model)
                 }
             }
 
-            Button {
-                scanVisibleModelsFolder()
-            } label: {
+            Button { scanVisibleModelsFolder() } label: {
                 Label("Scan Models Folder", systemImage: "folder.badge.gearshape")
             }
             .disabled(isImporting)
 
-            Button {
-                showingImporter = true
-            } label: {
-                Label("Import GGUF Models", systemImage: "square.and.arrow.down")
+            Button { showingImporter = true } label: {
+                Label("Import Models", systemImage: "square.and.arrow.down")
             }
             .disabled(isImporting)
         }
@@ -272,7 +359,7 @@ struct SettingsView: View {
                 Label("Run Onboarding Again", systemImage: "play.circle")
             }
 
-            Label("Model folder: Files → On My iPhone → LocalGGUFChat → Models", systemImage: "folder")
+            Label("Model folder: Files → On My iPhone → LocalLLM → Models", systemImage: "folder")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -280,8 +367,8 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section(header: Text("About")) {
-            Label("Runs fully on-device", systemImage: "lock.shield")
-            Label("Supports local GGUF models", systemImage: "doc.fill")
+            Label("Runs text chat on-device", systemImage: "lock.shield")
+            Label("Image, voice, and vision require dedicated backends", systemImage: "sparkles")
             HStack {
                 Text("Version")
                 Spacer()
@@ -304,26 +391,23 @@ struct SettingsView: View {
         }
 
         if let importStatus {
-            Section {
-                Text(importStatus)
-                    .foregroundColor(.secondary)
-            }
+            Section { Text(importStatus).foregroundColor(.secondary) }
         }
 
         if let errorText {
-            Section {
-                Text(errorText)
-                    .foregroundColor(.red)
-            }
+            Section { Text(errorText).foregroundColor(.red) }
         }
     }
 
     private func modelRow(_ model: ModelReferenceEntity) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let info = ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize)
+        return VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(model.displayName ?? "Model")
-                if model.id?.uuidString == generationSettings.defaultModelID {
-                    Text("Default")
+                    .lineLimit(1)
+                Spacer()
+                if isDefaultModel(model) {
+                    Text(defaultBadgeText(for: model))
                         .font(.caption2.weight(.bold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -333,9 +417,13 @@ struct SettingsView: View {
             Text(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file))
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Text(GenerationProfile.profile(forFileSize: model.fileSize).title)
-                .font(.caption2)
-                .foregroundColor(.secondary)
+            HStack(spacing: 6) {
+                Text(info.capability.title)
+                Text("•")
+                Text(info.compatibility.title)
+            }
+            .font(.caption2)
+            .foregroundColor(.secondary)
             if let path = model.originalPath {
                 Text(path)
                     .font(.caption2)
@@ -346,40 +434,56 @@ struct SettingsView: View {
         .padding(.vertical, 4)
     }
 
+    private func modelsMatching(_ capability: ModelCapability) -> [ModelReferenceEntity] {
+        Array(models).filter { model in
+            ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize).capability == capability
+        }
+    }
+
     private var defaultModel: ModelReferenceEntity? {
-        guard !generationSettings.defaultModelID.isEmpty else { return models.first }
-        return models.first(where: { $0.id?.uuidString == generationSettings.defaultModelID }) ?? models.first
+        guard !generationSettings.defaultModelID.isEmpty else { return modelsMatching(.text).first }
+        return models.first(where: { $0.id?.uuidString == generationSettings.defaultModelID }) ?? modelsMatching(.text).first
     }
 
     private var currentAutoProfileDescription: String {
-        guard generationSettings.generationMode == .auto else {
-            return "Manual mode uses your custom settings below."
-        }
-        guard defaultModel != nil else {
-            return "Auto mode will choose safe defaults after a model is selected."
-        }
+        guard generationSettings.generationMode == .auto else { return "Manual mode uses your custom settings below." }
+        guard defaultModel != nil else { return "Auto mode will choose safe defaults after a model is selected." }
         return "Auto mode adjusts prompt style, context length, and output length based on the selected model size."
     }
 
     private var appVersionText: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.9"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "10"
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.11"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "12"
         return "\(version) (\(build))"
     }
 
+    private func isDefaultModel(_ model: ModelReferenceEntity) -> Bool {
+        let id = model.id?.uuidString ?? ""
+        return generationSettings.defaultModelID == id ||
+        generationSettings.defaultImageModelID == id ||
+        generationSettings.defaultSpeechToTextModelID == id ||
+        generationSettings.defaultVoiceOutputModelID == id
+    }
+
+    private func defaultBadgeText(for model: ModelReferenceEntity) -> String {
+        let id = model.id?.uuidString ?? ""
+        if generationSettings.defaultModelID == id { return "Chat" }
+        if generationSettings.defaultImageModelID == id { return "Image" }
+        if generationSettings.defaultSpeechToTextModelID == id { return "Speech" }
+        if generationSettings.defaultVoiceOutputModelID == id { return "Voice" }
+        return "Default"
+    }
+
     private func ensureVisibleModelsFolderExists() {
-        do {
-            _ = try ModelFileAccess.visibleModelsDirectory()
-        } catch {
-            errorText = error.localizedDescription
-        }
+        do { _ = try ModelFileAccess.visibleModelsDirectory() }
+        catch { errorText = error.localizedDescription }
     }
 
     private func scanVisibleModelsFolder() {
         do {
             let urls = try ModelFileAccess.visibleModelFileURLs()
             guard !urls.isEmpty else {
-                importStatus = "No .gguf files found in LocalGGUFChat/Models."
+                importStatus = "No .gguf files found in LocalLLM/Models."
                 errorText = nil
                 return
             }
@@ -393,19 +497,13 @@ struct SettingsView: View {
                     originalPath: url.path,
                     fileSize: ModelFileAccess.fileSize(at: url)
                 )
-
-                if generationSettings.defaultModelID.isEmpty, let id = model.id {
-                    generationSettings.defaultModelID = id.uuidString
-                }
-
+                setDefaultIfNeeded(model)
                 count += 1
             }
 
             importStatus = count == 1 ? "Added 1 model from Models folder." : "Added \(count) models from Models folder."
             errorText = nil
-        } catch {
-            errorText = error.localizedDescription
-        }
+        } catch { errorText = error.localizedDescription }
     }
 
     private func importModels(_ result: Result<[URL], Error>) {
@@ -438,19 +536,13 @@ struct SettingsView: View {
                                     originalPath: item.originalPath,
                                     fileSize: item.fileSize
                                 )
-
-                                if generationSettings.defaultModelID.isEmpty, let id = model.id {
-                                    generationSettings.defaultModelID = id.uuidString
-                                }
-
+                                setDefaultIfNeeded(model)
                                 count += 1
                             }
 
                             importStatus = count == 1 ? "Imported 1 model." : "Imported \(count) models."
                             errorText = nil
-                        } catch {
-                            errorText = error.localizedDescription
-                        }
+                        } catch { errorText = error.localizedDescription }
                         isImporting = false
                     }
                 } catch {
@@ -460,8 +552,23 @@ struct SettingsView: View {
                     }
                 }
             }
-        } catch {
-            errorText = error.localizedDescription
+        } catch { errorText = error.localizedDescription }
+    }
+
+    private func setDefaultIfNeeded(_ model: ModelReferenceEntity) {
+        let info = ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize)
+        guard let id = model.id?.uuidString else { return }
+        switch info.capability {
+        case .text:
+            if generationSettings.defaultModelID.isEmpty { generationSettings.defaultModelID = id }
+        case .imageGeneration:
+            if generationSettings.defaultImageModelID.isEmpty { generationSettings.defaultImageModelID = id }
+        case .speechToText:
+            if generationSettings.defaultSpeechToTextModelID.isEmpty { generationSettings.defaultSpeechToTextModelID = id }
+        case .textToSpeech:
+            if generationSettings.defaultVoiceOutputModelID.isEmpty { generationSettings.defaultVoiceOutputModelID = id }
+        default:
+            break
         }
     }
 }
