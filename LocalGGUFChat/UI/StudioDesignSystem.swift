@@ -12,9 +12,19 @@ enum StudioTheme {
 }
 
 struct StudioGlassCard<Content: View>: View {
-    var cornerRadius: CGFloat = 20
-    var borderColor: Color = StudioTheme.border
-    @ViewBuilder var content: Content
+    let cornerRadius: CGFloat
+    let borderColor: Color
+    let content: Content
+
+    init(
+        cornerRadius: CGFloat = 20,
+        borderColor: Color = StudioTheme.border,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.cornerRadius = cornerRadius
+        self.borderColor = borderColor
+        self.content = content()
+    }
 
     var body: some View {
         content
@@ -131,7 +141,17 @@ struct StudioSecondaryButton: View {
 struct StudioSettingsRow<Accessory: View>: View {
     let title: String
     var subtitle: String?
-    @ViewBuilder var accessory: Accessory
+    let accessory: Accessory
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder accessory: () -> Accessory
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.accessory = accessory()
+    }
 
     var body: some View {
         HStack(spacing: 12) {
