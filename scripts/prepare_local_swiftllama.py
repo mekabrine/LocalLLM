@@ -125,10 +125,10 @@ project_text = project_text.replace(
     '  SwiftLlama:\n    url: https://github.com/ShenghaiWang/SwiftLlama.git\n    from: 0.4.0',
     '  SwiftLlama:\n    path: LocalPackages/SwiftLlama'
 )
-for old_version in ['1.5', '1.6', '1.7', '1.8', '1.9', '1.10']:
-    project_text = project_text.replace(f'MARKETING_VERSION: "{old_version}"', 'MARKETING_VERSION: "1.11"')
-for old_build in ['6', '7', '8', '9', '10', '11']:
-    project_text = project_text.replace(f'CURRENT_PROJECT_VERSION: "{old_build}"', 'CURRENT_PROJECT_VERSION: "12"')
+for old_version in ['1.5', '1.6', '1.7', '1.8', '1.9', '1.10', '1.11']:
+    project_text = project_text.replace(f'MARKETING_VERSION: "{old_version}"', 'MARKETING_VERSION: "1.12"')
+for old_build in ['6', '7', '8', '9', '10', '11', '12']:
+    project_text = project_text.replace(f'CURRENT_PROJECT_VERSION: "{old_build}"', 'CURRENT_PROJECT_VERSION: "13"')
 project.write_text(project_text)
 
 plist = Path('LocalGGUFChat/Resources/Info.plist')
@@ -141,12 +141,12 @@ if plist.exists():
     )
     plist_text = re.sub(
         r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)',
-        r'\g<1>1.11\2',
+        r'\g<1>1.12\2',
         plist_text
     )
     plist_text = re.sub(
         r'(<key>CFBundleVersion</key>\s*<string>)[^<]+(</string>)',
-        r'\g<1>12\2',
+        r'\g<1>13\2',
         plist_text
     )
     plist.write_text(plist_text)
