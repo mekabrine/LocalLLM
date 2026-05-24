@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreData
+import UIKit
 
 struct ModelLibraryView: View {
     @Environment(\.presentationMode) private var presentationMode
@@ -13,6 +14,7 @@ struct ModelLibraryView: View {
 
     @State private var selectedFilter: ModelCapability = .text
     @State private var showingImporter = false
+    @State private var isImporting = false
     @State private var statusText: String?
     @State private var errorText: String?
 
@@ -25,6 +27,11 @@ struct ModelLibraryView: View {
                         header
                         capabilityTabs
                         modelGrid
+                        if isImporting {
+                            Label("Importing model… Keep the app open.", systemImage: "hourglass")
+                                .font(.caption)
+                                .foregroundColor(StudioTheme.secondaryText)
+                        }
                         if let statusText { Text(statusText).font(.caption).foregroundColor(StudioTheme.secondaryText) }
                         if let errorText { Text(errorText).font(.caption).foregroundColor(StudioTheme.danger) }
                     }
@@ -36,11 +43,13 @@ struct ModelLibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Done") { presentationMode.wrappedValue.dismiss() }
+                        .disabled(isImporting)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showingImporter = true } label: {
                         Label("Add", systemImage: "plus")
                     }
+                    .disabled(isImporting)
                 }
             }
             .sheet(isPresented: $showingImporter) {
@@ -115,6 +124,7 @@ struct ModelLibraryView: View {
                                 .foregroundColor(.white)
                         }
                         .buttonStyle(.plain)
+                        .disabled(isImporting)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -145,34 +155,52 @@ struct ModelLibraryView: View {
         do {
             let urls = try result.get()
             guard !urls.isEmpty else { return }
-            var count = 0
-            for url in urls {
-                let bookmark = try ModelFileAccess.makeBookmarkAsync(for: url)
-                Task {
-                    do {
-                        let data = try await bookmark
-                        await MainActor.run {
-                            do {
+            isImporting = true
+            statusText = nil
+            errorText = nil
+
+            Task {
+                do {
+                    var importedItems: [(bookmark: Data, displayName: String, originalPath: String, fileSize: Int64)] = []
+                    for url in urls {
+                        let displayName = ModelFileAccess.displayName(for: url)
+                        let originalPath = url.path
+                        let fileSize = ModelFileAccess.fileSize(at: url)
+                        let bookmark = try await ModelFileAccess.makeBookmarkAsync(for: url)
+                        importedItems.append((bookmark, displayName, originalPath, fileSize))
+                    }
+
+                    await MainActor.run {
+                        do {
+                            var count = 0
+                            for item in importedItems {
                                 let model = try PersistenceController.shared.upsertModel(
-                                    from: data,
-                                    displayName: ModelFileAccess.displayName(for: url),
-                                    originalPath: url.path,
-                                    fileSize: ModelFileAccess.fileSize(at: url)
+                                    from: item.bookmark,
+                                    displayName: item.displayName,
+                                    originalPath: item.originalPath,
+                                    fileSize: item.fileSize
                                 )
                                 setDefaultIfNeeded(model)
                                 count += 1
-                                statusText = count == 1 ? "Imported 1 model." : "Imported \(count) models."
-                            } catch {
-                                errorText = error.localizedDescription
                             }
+                            statusText = count == 1 ? "Imported 1 model." : "Imported \(count) models."
+                            errorText = nil
+                            isImporting = false
+                        } catch {
+                            errorText = error.localizedDescription
+                            isImporting = false
                         }
-                    } catch {
-                        await MainActor.run { errorText = error.localizedDescription }
+                    }
+                } catch {
+                    await MainActor.run {
+                        errorText = error.localizedDescription
+                        isImporting = false
                     }
                 }
             }
         } catch {
             errorText = error.localizedDescription
+            isImporting = false
         }
     }
 
