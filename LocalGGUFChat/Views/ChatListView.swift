@@ -1,10 +1,10 @@
-
 import SwiftUI
 import CoreData
 
 struct ChatListView: View {
     @Environment(\.managedObjectContext) private var moc
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var generationSettings: GenerationSettings
 
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \ChatEntity.updatedAt, ascending: false)],
@@ -13,6 +13,7 @@ struct ChatListView: View {
     private var chats: FetchedResults<ChatEntity>
 
     @State private var showingNewChat = false
+    @State private var showingSettings = false
 
     var body: some View {
         NavigationView {
@@ -37,18 +38,34 @@ struct ChatListView: View {
             }
             .navigationTitle("Chats")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("Settings")
+                }
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         showingNewChat = true
                     } label: {
                         Image(systemName: "square.and.pencil")
                     }
+                    .accessibilityLabel("New Chat")
                 }
             }
             .sheet(isPresented: $showingNewChat) {
                 NewChatView()
                     .environment(\.managedObjectContext, moc)
                     .environmentObject(appState)
+                    .environmentObject(generationSettings)
+            }
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
+                    .environment(\.managedObjectContext, moc)
+                    .environmentObject(generationSettings)
             }
         }
     }
