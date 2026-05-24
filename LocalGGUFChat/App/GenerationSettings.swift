@@ -40,7 +40,7 @@ final class GenerationSettings: ObservableObject {
     }
 
     var stopSequencesText: String {
-        get { defaults.string(forKey: Keys.stopSequences) ?? "User:" }
+        get { defaults.string(forKey: Keys.stopSequences) ?? "" }
         set { set(newValue, forKey: Keys.stopSequences) }
     }
 
@@ -148,7 +148,7 @@ final class GenerationSettings: ObservableObject {
         temperature = GenerationPreset.balanced.temperature
         topP = GenerationPreset.balanced.topP
         maxTokens = GenerationPreset.balanced.maxTokens
-        stopSequencesText = "User:\nHuman:\nAssistant:\nPerson:\nAI:"
+        stopSequencesText = ""
         globalSystemMessage = Self.defaultSystemMessage
     }
 
@@ -185,7 +185,7 @@ final class GenerationSettings: ObservableObject {
             Keys.temperature: GenerationPreset.balanced.temperature,
             Keys.topP: GenerationPreset.balanced.topP,
             Keys.maxTokens: GenerationPreset.balanced.maxTokens,
-            Keys.stopSequences: "User:\nHuman:\nAssistant:\nPerson:\nAI:",
+            Keys.stopSequences: "",
             Keys.defaultModelID: "",
             Keys.generationMode: GenerationMode.auto.rawValue,
             Keys.promptStyle: PromptStyle.auto.rawValue,
