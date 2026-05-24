@@ -2,12 +2,29 @@ import Foundation
 
 /// Helper for importing model files and reopening the app-managed local copy.
 enum ModelFileAccess {
-    /// Copy an imported model into Application Support and create an ordinary
-    /// bookmark to that local copy. iOS does not support macOS-style
-    /// security-scoped bookmarks, so keeping an app-owned copy is the most
-    /// reliable way to reopen models after relaunch.
+    enum ImportError: LocalizedError {
+        case fileMissing(URL)
+        case notEnoughSpace(required: Int64, available: Int64)
+
+        var errorDescription: String? {
+            switch self {
+            case .fileMissing:
+                return "The selected model file could not be opened. Move it to On My iPhone or iCloud Drive and try again."
+            case let .notEnoughSpace(required, available):
+                let requiredText = ByteCountFormatter.string(fromByteCount: required, countStyle: .file)
+                let availableText = ByteCountFormatter.string(fromByteCount: available, countStyle: .file)
+                return "There is not enough free storage to import this model. Required: \(requiredText). Available: \(availableText)."
+            }
+        }
+    }
+
+    /// Store the selected model in app-owned storage and create a bookmark to it.
+    ///
+    /// The UIKit picker is opened with `asCopy: true`, so iOS already gives the app
+    /// a temporary local copy. For large GGUF files, moving that temporary copy is
+    /// much safer than copying it again on the main app flow.
     static func makeBookmark(for url: URL) throws -> Data {
-        let localURL = try copyModelIntoAppStorage(from: url)
+        let localURL = try moveOrCopyModelIntoAppStorage(from: url)
         return try localURL.bookmarkData(
             options: [],
             includingResourceValuesForKeys: nil,
@@ -47,8 +64,13 @@ enum ModelFileAccess {
         return try await body(url)
     }
 
-    private static func copyModelIntoAppStorage(from sourceURL: URL) throws -> URL {
+    private static func moveOrCopyModelIntoAppStorage(from sourceURL: URL) throws -> URL {
         let fileManager = FileManager.default
+
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            throw ImportError.fileMissing(sourceURL)
+        }
+
         let supportURL = try fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -70,8 +92,32 @@ enum ModelFileAccess {
             }
         }
 
-        try fileManager.copyItem(at: sourceURL, to: destinationURL)
-        return destinationURL
+        do {
+            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+            return destinationURL
+        } catch {
+            let requiredBytes = fileSize(at: sourceURL)
+            if requiredBytes > 0 {
+                let availableBytes = availableStorageBytes(near: modelsDirectory)
+                if availableBytes > 0, availableBytes < requiredBytes {
+                    throw ImportError.notEnoughSpace(required: requiredBytes, available: availableBytes)
+                }
+            }
+
+            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            return destinationURL
+        }
+    }
+
+    private static func availableStorageBytes(near url: URL) -> Int64 {
+        do {
+            let values = try url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            if let capacity = values.volumeAvailableCapacityForImportantUsage {
+                return capacity
+            }
+        } catch { /* ignore */ }
+
+        return 0
     }
 
     private static func uniqueDestinationURL(in directory: URL, preferredName: String) -> URL {
