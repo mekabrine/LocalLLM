@@ -20,6 +20,94 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("LocalLLM", systemImage: "sparkles")
+                            .font(.title2.weight(.bold))
+                        Text("Private local chats powered by GGUF models on this device.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 8)
+                }
+
+                Section(header: Text("Models"), footer: Text("Put large .gguf files in Files → On My iPhone → LocalGGUFChat → Models, then tap Scan Models Folder. This avoids copying 1GB+ files through the picker.")) {
+                    if models.isEmpty {
+                        Text("No imported models yet.")
+                            .foregroundColor(.secondary)
+                    } else {
+                        Picker("Default model", selection: $generationSettings.defaultModelID) {
+                            Text("None").tag("")
+                            ForEach(models) { model in
+                                Text(model.displayName ?? "Model")
+                                    .tag(model.id?.uuidString ?? "")
+                            }
+                        }
+                        .disabled(isImporting)
+
+                        ForEach(models) { model in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(model.displayName ?? "Model")
+                                    if model.id?.uuidString == generationSettings.defaultModelID {
+                                        Text("Default")
+                                            .font(.caption2.weight(.bold))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+                                    }
+                                }
+                                Text(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                if let path = model.originalPath {
+                                    Text(path)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+
+                    Button {
+                        scanVisibleModelsFolder()
+                    } label: {
+                        Label("Scan Models Folder", systemImage: "folder.badge.gearshape")
+                    }
+                    .disabled(isImporting)
+
+                    Button {
+                        showingImporter = true
+                    } label: {
+                        Label("Import GGUF Models", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(isImporting)
+                }
+
+                Section(header: Text("Generation Presets")) {
+                    ForEach(GenerationPreset.all) { preset in
+                        Button {
+                            generationSettings.applyPreset(preset)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(preset.title)
+                                    Text(preset.subtitle)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Text("\(preset.maxTokens)")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .disabled(isImporting)
+                    }
+                }
+
                 Section(header: Text("Generation"), footer: Text("Temperature controls creativity. Higher values are more varied; lower values are more predictable.")) {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
@@ -50,17 +138,18 @@ struct SettingsView: View {
                         }
                     }
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Stop sequences")
-                        TextEditor(text: $generationSettings.stopSequencesText)
-                            .frame(minHeight: 76)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(Color.secondary.opacity(0.2))
-                            )
-                        Text("One per line. The default prevents the model from continuing as the user.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    DisclosureGroup("Advanced stop sequences") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextEditor(text: $generationSettings.stopSequencesText)
+                                .frame(minHeight: 76)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(Color.secondary.opacity(0.2))
+                                )
+                            Text("One per line. Built-in filtering also cuts common role labels.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
 
                     Button("Reset Generation Defaults") {
@@ -69,50 +158,15 @@ struct SettingsView: View {
                     .disabled(isImporting)
                 }
 
-                Section(header: Text("Models"), footer: Text("Put large .gguf files in Files → On My iPhone → LocalGGUFChat → Models, then tap Scan Models Folder. This avoids copying 1GB+ files through the picker.")) {
-                    if models.isEmpty {
-                        Text("No imported models yet.")
+                Section(header: Text("About")) {
+                    Label("Runs fully on-device", systemImage: "lock.shield")
+                    Label("Supports local GGUF models", systemImage: "doc.fill")
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text(appVersionText)
                             .foregroundColor(.secondary)
-                    } else {
-                        Picker("Default model", selection: $generationSettings.defaultModelID) {
-                            Text("None").tag("")
-                            ForEach(models) { model in
-                                Text(model.displayName ?? "Model")
-                                    .tag(model.id?.uuidString ?? "")
-                            }
-                        }
-                        .disabled(isImporting)
-
-                        ForEach(models) { model in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(model.displayName ?? "Model")
-                                Text(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file))
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                if let path = model.originalPath {
-                                    Text(path)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
                     }
-
-                    Button {
-                        scanVisibleModelsFolder()
-                    } label: {
-                        Label("Scan Models Folder", systemImage: "folder.badge.gearshape")
-                    }
-                    .disabled(isImporting)
-
-                    Button {
-                        showingImporter = true
-                    } label: {
-                        Label("Import GGUF Models", systemImage: "square.and.arrow.down")
-                    }
-                    .disabled(isImporting)
                 }
 
                 if isImporting {
@@ -157,6 +211,12 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var appVersionText: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.8"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "9"
+        return "\(version) (\(build))"
     }
 
     private func ensureVisibleModelsFolderExists() {
