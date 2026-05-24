@@ -57,7 +57,7 @@ enum PromptBuilder {
     }
 
     static func tinyAssistantRetryPrompt(userText: String) -> String {
-        tinyAssistantPrompt(latestUserText: clean(userText))
+        tinyAssistantPrompt(latestUserText: clean(userText), memory: "")
     }
 
     private static func buildResult(
@@ -71,7 +71,7 @@ enum PromptBuilder {
         var warnings: [String] = []
 
         if effectiveSettings.usesSmallModelProtection {
-            warnings.append("Small Model Protection is active: history is limited, reasoning is disabled, and Plain uses a tiny assistant wrapper.")
+            warnings.append("Small Model Protection is active: compact recent chat memory is included, reasoning is disabled, and Plain uses a tiny assistant wrapper.")
         }
 
         let prompt: String
@@ -80,7 +80,8 @@ enum PromptBuilder {
             if !trimmedSystem.isEmpty && effectiveSettings.usesSmallModelProtection {
                 warnings.append("System message ignored for Plain small-model mode.")
             }
-            prompt = tinyAssistantPrompt(latestUserText: latestUserText)
+            let memory = compactMemoryContext(from: cleanedMessages, limit: max(effectiveSettings.historyLimit, 6))
+            prompt = tinyAssistantPrompt(latestUserText: latestUserText, memory: memory)
         case .raw:
             warnings.append("Raw Debug sends exactly the latest user text and may cause completion-style models to continue the user's message.")
             prompt = latestUserText
@@ -110,15 +111,22 @@ enum PromptBuilder {
         return (trimmed, warnings)
     }
 
-    private static func tinyAssistantPrompt(latestUserText: String) -> String {
-        """
-        You are the assistant. Write only a short assistant reply to the user. Do not continue the user's message.
+    private static func tinyAssistantPrompt(latestUserText: String, memory: String) -> String {
+        var lines: [String] = [
+            "You are the assistant. Answer the latest user message only.",
+            "Use earlier chat facts when the user asks what was said before.",
+            "Do not write role labels. Do not continue the user's message."
+        ]
 
-        User message:
-        \(latestUserText)
+        if !memory.isEmpty {
+            lines.append("Earlier chat facts:")
+            lines.append(memory)
+        }
 
-        Assistant reply:
-        """
+        lines.append("Latest user message:")
+        lines.append(latestUserText)
+        lines.append("Assistant answer:")
+        return lines.joined(separator: "\n")
     }
 
     private static func simplePrompt(
@@ -168,6 +176,20 @@ enum PromptBuilder {
         return "Task:\n\(instruction)\n\nMessage:\n\(latestUserText)\n\nReply:"
     }
 
+    private static func compactMemoryContext(from messages: [PromptMessage], limit: Int) -> String {
+        guard messages.count > 1 else { return "" }
+        let contextMessages = messages.dropLast().suffix(max(1, limit - 1))
+        return contextMessages.map { message in
+            let clipped = clip(message.text, to: 140)
+            switch message.role {
+            case .user:
+                return "User said: \(clipped)"
+            case .assistant:
+                return "Assistant answered: \(clipped)"
+            }
+        }.joined(separator: "\n")
+    }
+
     private static func previousContext(from messages: [PromptMessage], limit: Int) -> String {
         guard limit > 1 else { return "" }
         guard messages.count > 1 else { return "" }
@@ -199,6 +221,12 @@ enum PromptBuilder {
     private static func clean(_ text: String) -> String {
         text.replacingOccurrences(of: "\u{0000}", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func clip(_ text: String, to limit: Int) -> String {
+        guard text.count > limit else { return text }
+        let end = text.index(text.startIndex, offsetBy: limit)
+        return String(text[..<end]) + "…"
     }
 
     private static func trim(_ prompt: String, to limit: Int) -> String {
