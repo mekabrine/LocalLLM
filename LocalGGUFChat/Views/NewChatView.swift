@@ -18,8 +18,6 @@ struct NewChatView: View {
     @State private var showingImporter = false
     @State private var errorText: String?
 
-    private var ggufType: UTType { UTType(filenameExtension: "gguf") ?? .data }
-
     var body: some View {
         NavigationView {
             Form {
@@ -76,12 +74,11 @@ struct NewChatView: View {
                 }
             }
             .onAppear(perform: selectInitialModel)
-            .fileImporter(
-                isPresented: $showingImporter,
-                allowedContentTypes: [ggufType],
-                allowsMultipleSelection: true
-            ) { result in
-                handleImport(result)
+            .sheet(isPresented: $showingImporter) {
+                ModelDocumentPicker(allowsMultipleSelection: true) { result in
+                    showingImporter = false
+                    handleImport(result)
+                }
             }
         }
     }
