@@ -198,7 +198,9 @@ struct NewChatView: View {
     private func createChat() {
         guard let selectedModel else { return }
         let chat = PersistenceController.shared.createChat(title: title, model: selectedModel)
-        onCreate(chat)
         presentationMode.wrappedValue.dismiss()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            onCreate(chat)
+        }
     }
 }
