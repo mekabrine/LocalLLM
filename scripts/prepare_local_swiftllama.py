@@ -3,14 +3,14 @@ import re
 import shutil
 import subprocess
 
-VERSION = '1.20'
-BUILD = '21'
+VERSION = '1.22'
+BUILD = '23'
 PACKAGE_DIR = Path('LocalPackages/SwiftLlama')
 
 if PACKAGE_DIR.exists():
     shutil.rmtree(PACKAGE_DIR)
 PACKAGE_DIR.parent.mkdir(parents=True, exist_ok=True)
-subprocess.run(['git', 'clone', '--depth', '1', '--branch', 'v0.4.0', 'https://github.com/ShenghaiWang/SwiftLlama.git', str(PACKAGE_DIR)], check=True)
+subprocess.run(['git', 'clone', '--depth', '1', '--branch', 'main', 'https://github.com/ShenghaiWang/SwiftLlama.git', str(PACKAGE_DIR)], check=True)
 
 model_path = PACKAGE_DIR / 'Sources/SwiftLlama/LlamaModel.swift'
 text = model_path.read_text()
@@ -21,7 +21,9 @@ replacements = {
     '        llama_backend_free()\n': '',
     'llama_token_is_eog(model, newToken)': 'llama_token_is_eog(vocab, newToken)',
     'llama_token_to_piece(model, token, &piece, length, 0, false)': 'llama_token_to_piece(vocab, token, &piece, length, 0, false)',
-    '        tokens = tokenize(text: prompt.prompt, addBos: true)\n        temporaryInvalidCChars = []\n': '        tokens = try tokenize(text: prompt.prompt, addBos: true)\n        guard !tokens.isEmpty else { throw SwiftLlamaError.others("Prompt tokenization produced no tokens") }\n        temporaryInvalidCChars = []\n'
+    'llama_token_to_piece(model, token, base, cap, 0, false)': 'llama_token_to_piece(vocab, token, base, cap, 0, false)',
+    'tokens = tokenize(text: prompt.prompt, addBos: true)': 'tokens = try tokenize(text: prompt.prompt, addBos: true)',
+    '        tokens = try tokenize(text: prompt.prompt, addBos: true)\n': '        tokens = try tokenize(text: prompt.prompt, addBos: true)\n        guard !tokens.isEmpty else { throw SwiftLlamaError.others("Prompt tokenization produced no tokens") }\n'
 }
 for old, new in replacements.items():
     text = text.replace(old, new)
