@@ -1,26 +1,60 @@
 import Foundation
-import SwiftUI
 
 @MainActor
 final class GenerationSettings: ObservableObject {
-    @AppStorage("generation.temperature") var temperature: Double = 0.8 {
-        willSet { objectWillChange.send() }
+    private enum Keys {
+        static let temperature = "generation.temperature"
+        static let topP = "generation.topP"
+        static let maxTokens = "generation.maxTokens"
+        static let stopSequences = "generation.stopSequences"
+        static let defaultModelID = "models.defaultModelID"
     }
 
-    @AppStorage("generation.topP") var topP: Double = 0.95 {
-        willSet { objectWillChange.send() }
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        registerDefaults()
     }
 
-    @AppStorage("generation.maxTokens") var maxTokens: Int = 512 {
-        willSet { objectWillChange.send() }
+    var temperature: Double {
+        get { defaults.double(forKey: Keys.temperature) }
+        set {
+            defaults.set(newValue, forKey: Keys.temperature)
+            objectWillChange.send()
+        }
     }
 
-    @AppStorage("generation.stopSequences") var stopSequencesText: String = "User:" {
-        willSet { objectWillChange.send() }
+    var topP: Double {
+        get { defaults.double(forKey: Keys.topP) }
+        set {
+            defaults.set(newValue, forKey: Keys.topP)
+            objectWillChange.send()
+        }
     }
 
-    @AppStorage("models.defaultModelID") var defaultModelID: String = "" {
-        willSet { objectWillChange.send() }
+    var maxTokens: Int {
+        get { defaults.integer(forKey: Keys.maxTokens) }
+        set {
+            defaults.set(newValue, forKey: Keys.maxTokens)
+            objectWillChange.send()
+        }
+    }
+
+    var stopSequencesText: String {
+        get { defaults.string(forKey: Keys.stopSequences) ?? "User:" }
+        set {
+            defaults.set(newValue, forKey: Keys.stopSequences)
+            objectWillChange.send()
+        }
+    }
+
+    var defaultModelID: String {
+        get { defaults.string(forKey: Keys.defaultModelID) ?? "" }
+        set {
+            defaults.set(newValue, forKey: Keys.defaultModelID)
+            objectWillChange.send()
+        }
     }
 
     var stopSequences: [String] {
@@ -44,5 +78,15 @@ final class GenerationSettings: ObservableObject {
         topP = 0.95
         maxTokens = 512
         stopSequencesText = "User:"
+    }
+
+    private func registerDefaults() {
+        defaults.register(defaults: [
+            Keys.temperature: 0.8,
+            Keys.topP: 0.95,
+            Keys.maxTokens: 512,
+            Keys.stopSequences: "User:",
+            Keys.defaultModelID: ""
+        ])
     }
 }
