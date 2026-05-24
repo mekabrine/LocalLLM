@@ -11,48 +11,77 @@ struct ChatBubble: View {
 
     var body: some View {
         HStack(alignment: .bottom) {
-            if isUser { Spacer(minLength: 40) }
+            if isUser { Spacer(minLength: 54) }
 
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
                 Group {
                     if isWaitingForAssistantText {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            Text("Thinking…")
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                        }
+                        ThinkingDots()
+                            .frame(height: 18)
                     } else {
                         Text(text)
                             .font(.body)
+                            .lineSpacing(3)
                             .foregroundColor(isUser ? .white : .primary)
+                            .textSelection(.enabled)
                     }
                 }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(isUser ? Color.accentColor : Color.secondary.opacity(0.12))
-                )
+                .padding(.vertical, isWaitingForAssistantText ? 12 : 11)
+                .padding(.horizontal, isWaitingForAssistantText ? 16 : 14)
+                .background(bubbleBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
-                    Group {
-                        if isOutdated {
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(Color.orange.opacity(0.8), lineWidth: 1.5)
-                        }
-                    }
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(borderColor, lineWidth: isOutdated ? 1.5 : 1)
                 )
 
                 if isOutdated {
-                    Text("Out of date")
+                    Label("Out of date", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption2)
                         .foregroundColor(.orange)
                 }
             }
 
-            if !isUser { Spacer(minLength: 40) }
+            if !isUser { Spacer(minLength: 54) }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 2)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 3)
+        .transition(.opacity.combined(with: .move(edge: isUser ? .trailing : .leading)))
+    }
+
+    private var bubbleBackground: some ShapeStyle {
+        if isUser {
+            return AnyShapeStyle(Color.accentColor)
+        } else {
+            return AnyShapeStyle(Color.white.opacity(0.09))
+        }
+    }
+
+    private var borderColor: Color {
+        if isOutdated { return .orange.opacity(0.85) }
+        return isUser ? .white.opacity(0.10) : .white.opacity(0.08)
+    }
+}
+
+private struct ThinkingDots: View {
+    @State private var animate = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(Color.secondary)
+                    .frame(width: 7, height: 7)
+                    .scaleEffect(animate ? 1.0 : 0.55)
+                    .opacity(animate ? 1.0 : 0.35)
+                    .animation(
+                        .easeInOut(duration: 0.55)
+                        .repeatForever()
+                        .delay(Double(index) * 0.16),
+                        value: animate
+                    )
+            }
+        }
+        .onAppear { animate = true }
     }
 }
