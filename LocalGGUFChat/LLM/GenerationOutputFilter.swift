@@ -4,6 +4,7 @@ enum GenerationOutputFilter {
     private static let builtInStops = [
         "\nUser:", "\nHuman:", "\nAssistant:",
         "User:", "Human:", "Assistant:",
+        "Person message:", "Assistant answer:", "Conversation:",
         "<|user|>", "<|assistant|>",
         "### Instruction", "### Response", "### Input"
     ]
