@@ -25,7 +25,8 @@ struct ChatView: View {
     @State private var showingFilePicker = false
     @State private var pendingAttachments: [PendingFileAttachment] = []
     @State private var generateImageInsteadOfText: Bool = false
-    @State private var activeDiagnostic: RuntimeDiagnostic?
+    @State private var lastDiagnostic: RuntimeDiagnostic?
+    @State private var showingDiagnostic = false
     @State private var errorText: String?
     @State private var showScrollToBottom: Bool = false
 
@@ -61,13 +62,13 @@ struct ChatView: View {
                     }
 
                     Button {
-                        if let diagnostic = activeDiagnostic {
+                        if let diagnostic = lastDiagnostic {
                             UIPasteboard.general.string = diagnostic.copyText
                         }
                     } label: {
                         Label("Copy Last Diagnostic", systemImage: "doc.on.doc")
                     }
-                    .disabled(activeDiagnostic == nil)
+                    .disabled(lastDiagnostic == nil)
 
                     Button { regenerateLastResponse() } label: {
                         Label("Regenerate Last", systemImage: "arrow.clockwise")
@@ -107,8 +108,10 @@ struct ChatView: View {
                 handleFilePick(result)
             }
         }
-        .sheet(item: $activeDiagnostic) { diagnostic in
-            RuntimeDiagnosticView(diagnostic: diagnostic)
+        .sheet(isPresented: $showingDiagnostic) {
+            if let lastDiagnostic {
+                RuntimeDiagnosticView(diagnostic: lastDiagnostic)
+            }
         }
         .alert(item: $confirmDeleteFromHere) { msg in
             Alert(
@@ -205,14 +208,14 @@ struct ChatView: View {
         VStack(spacing: 8) {
             if let errorText {
                 Button {
-                    if activeDiagnostic != nil { activeDiagnostic = activeDiagnostic }
+                    if lastDiagnostic != nil { showingDiagnostic = true }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text(errorText)
                             .lineLimit(2)
                         Spacer()
-                        if activeDiagnostic != nil { Image(systemName: "chevron.up") }
+                        if lastDiagnostic != nil { Image(systemName: "chevron.up") }
                     }
                     .font(.footnote)
                     .foregroundColor(StudioTheme.danger)
@@ -284,9 +287,7 @@ struct ChatView: View {
 
     private var composerModeRow: some View {
         HStack(spacing: 14) {
-            Button {
-                showingFilePicker = true
-            } label: {
+            Button { showingFilePicker = true } label: {
                 Label("Files", systemImage: "doc.badge.plus")
             }
 
@@ -375,7 +376,7 @@ struct ChatView: View {
         guard canSend else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         errorText = nil
-        activeDiagnostic = nil
+        lastDiagnostic = nil
         showScrollToBottom = false
 
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -422,9 +423,7 @@ struct ChatView: View {
             """
         }.joined(separator: "\n\n---\n\n")
 
-        if typedText.isEmpty {
-            return "Please use the attached file context.\n\n\(fileText)"
-        }
+        if typedText.isEmpty { return "Please use the attached file context.\n\n\(fileText)" }
         return "\(typedText)\n\nFile context:\n\(fileText)"
     }
 
@@ -453,7 +452,7 @@ struct ChatView: View {
         let assistantMsg = PersistenceController.shared.appendMessage(chat: chat, role: .assistant, text: "")
         isGenerating = true
         errorText = nil
-        activeDiagnostic = nil
+        lastDiagnostic = nil
         generationTask?.cancel()
         generationTask = Task { await generateReply(into: assistantMsg, including: lastUserMessage) }
     }
@@ -469,7 +468,7 @@ struct ChatView: View {
         let assistantMsg = PersistenceController.shared.appendMessage(chat: chat, role: .assistant, text: "")
         isGenerating = true
         errorText = nil
-        activeDiagnostic = nil
+        lastDiagnostic = nil
         generationTask?.cancel()
         generationTask = Task { await generateReply(into: assistantMsg, including: previousUser) }
     }
@@ -561,7 +560,8 @@ struct ChatView: View {
             let diagnostic = RuntimeDiagnostic.from(error: error, stage: stage, model: diagnosticModel, settings: diagnosticSettings)
             await MainActor.run {
                 displayDriver?.cancel()
-                activeDiagnostic = diagnostic
+                lastDiagnostic = diagnostic
+                showingDiagnostic = generationSettings.detailedErrors
                 errorText = generationSettings.detailedErrors ? diagnostic.shortMessage : error.localizedDescription
                 assistantEntity.text = ""
                 isGenerating = false
@@ -579,9 +579,7 @@ struct ChatView: View {
         }
     }
 
-    private var hasOutdatedMessages: Bool {
-        messages.contains(where: { $0.isOutdated })
-    }
+    private var hasOutdatedMessages: Bool { messages.contains(where: { $0.isOutdated }) }
 
     @ViewBuilder
     private func modelHeader(model: ModelReferenceEntity) -> some View {
@@ -631,21 +629,17 @@ private struct MessageRow: View {
     let onDeleteFromHere: () -> Void
 
     var body: some View {
-        ChatBubble(
-            text: message.text ?? "",
-            isUser: message.role == MessageRole.user.rawValue,
-            isOutdated: message.isOutdated
-        )
-        .contextMenu {
-            Button { onCopy() } label: { Label("Copy", systemImage: "doc.on.doc") }
-            Button { onSelectText() } label: { Label("Select Text", systemImage: "selection.pin.in.out") }
-            Button { onEdit() } label: { Label("Edit Message", systemImage: "pencil") }
-            if message.role == MessageRole.assistant.rawValue {
-                Button { onRegenerate() } label: { Label("Regenerate", systemImage: "arrow.clockwise") }
+        ChatBubble(text: message.text ?? "", isUser: message.role == MessageRole.user.rawValue, isOutdated: message.isOutdated)
+            .contextMenu {
+                Button { onCopy() } label: { Label("Copy", systemImage: "doc.on.doc") }
+                Button { onSelectText() } label: { Label("Select Text", systemImage: "selection.pin.in.out") }
+                Button { onEdit() } label: { Label("Edit Message", systemImage: "pencil") }
+                if message.role == MessageRole.assistant.rawValue {
+                    Button { onRegenerate() } label: { Label("Regenerate", systemImage: "arrow.clockwise") }
+                }
+                Divider()
+                Button(role: .destructive) { onDeleteFromHere() } label: { Label("Delete from Here", systemImage: "trash") }
             }
-            Divider()
-            Button(role: .destructive) { onDeleteFromHere() } label: { Label("Delete from Here", systemImage: "trash") }
-        }
     }
 }
 
@@ -696,12 +690,8 @@ private struct RuntimeDiagnosticView: View {
             .navigationTitle("Model Load Error")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") { presentationMode.wrappedValue.dismiss() }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Copy") { UIPasteboard.general.string = diagnostic.copyText }
-                }
+                ToolbarItem(placement: .navigationBarLeading) { Button("Done") { presentationMode.wrappedValue.dismiss() } }
+                ToolbarItem(placement: .navigationBarTrailing) { Button("Copy") { UIPasteboard.general.string = diagnostic.copyText } }
             }
         }
     }
@@ -710,7 +700,7 @@ private struct RuntimeDiagnosticView: View {
         StudioGlassCard(cornerRadius: 18) {
             VStack(alignment: .leading, spacing: 10) {
                 Text(title).font(.headline)
-                ForEach(rows, id: \.0) { row in
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(row.0)
                             .font(.caption.weight(.semibold))
