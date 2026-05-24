@@ -2,9 +2,12 @@ import Foundation
 
 /// Helper for importing model files and reopening the app-managed local copy.
 enum ModelFileAccess {
+    private static let largeFileCopyLimit: Int64 = 100 * 1024 * 1024
+
     enum ImportError: LocalizedError {
         case fileMissing(URL)
         case notEnoughSpace(required: Int64, available: Int64)
+        case largeFileMoveFailed(filename: String)
 
         var errorDescription: String? {
             switch self {
@@ -14,13 +17,15 @@ enum ModelFileAccess {
                 let requiredText = ByteCountFormatter.string(fromByteCount: required, countStyle: .file)
                 let availableText = ByteCountFormatter.string(fromByteCount: available, countStyle: .file)
                 return "There is not enough free storage to import this model. Required: \(requiredText). Available: \(availableText)."
+            case let .largeFileMoveFailed(filename):
+                return "Could not safely import \(filename). To avoid crashing while copying a large model, place the GGUF file in On My iPhone or iCloud Drive and try again."
             }
         }
     }
 
     /// Store the selected model in app-owned storage and create a bookmark to it.
     ///
-    /// The UIKit picker is opened with `asCopy: true`, so iOS already gives the app
+    /// The UIKit picker is opened with `asCopy: true`, so iOS usually gives the app
     /// a temporary local copy. For large GGUF files, moving that temporary copy is
     /// much safer than copying it again on the main app flow.
     static func makeBookmark(for url: URL) throws -> Data {
@@ -71,6 +76,8 @@ enum ModelFileAccess {
             throw ImportError.fileMissing(sourceURL)
         }
 
+        let sourceSize = fileSize(at: sourceURL)
+
         let supportURL = try fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -94,19 +101,31 @@ enum ModelFileAccess {
 
         do {
             try fileManager.moveItem(at: sourceURL, to: destinationURL)
+            excludeFromBackup(destinationURL)
             return destinationURL
         } catch {
-            let requiredBytes = fileSize(at: sourceURL)
-            if requiredBytes > 0 {
+            if sourceSize >= largeFileCopyLimit {
+                throw ImportError.largeFileMoveFailed(filename: sourceURL.lastPathComponent)
+            }
+
+            if sourceSize > 0 {
                 let availableBytes = availableStorageBytes(near: modelsDirectory)
-                if availableBytes > 0, availableBytes < requiredBytes {
-                    throw ImportError.notEnoughSpace(required: requiredBytes, available: availableBytes)
+                if availableBytes > 0, availableBytes < sourceSize {
+                    throw ImportError.notEnoughSpace(required: sourceSize, available: availableBytes)
                 }
             }
 
             try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            excludeFromBackup(destinationURL)
             return destinationURL
         }
+    }
+
+    private static func excludeFromBackup(_ url: URL) {
+        var mutableURL = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? mutableURL.setResourceValues(values)
     }
 
     private static func availableStorageBytes(near url: URL) -> Int64 {
