@@ -16,8 +16,6 @@ struct SettingsView: View {
     @State private var importStatus: String?
     @State private var errorText: String?
 
-    private var ggufType: UTType { UTType(filenameExtension: "gguf") ?? .data }
-
     var body: some View {
         NavigationView {
             Form {
@@ -69,7 +67,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Section(header: Text("Models"), footer: Text("Imported models are stored as security-scoped bookmarks, so the app can reopen them from Files later without copying large GGUF files into the app container.")) {
+                Section(header: Text("Models"), footer: Text("Imported GGUF files are copied into app storage so the app can reopen them reliably after relaunch.")) {
                     if models.isEmpty {
                         Text("No imported models yet.")
                             .foregroundColor(.secondary)
@@ -102,7 +100,7 @@ struct SettingsView: View {
                     Button {
                         showingImporter = true
                     } label: {
-                        Label("Import .gguf Models", systemImage: "square.and.arrow.down")
+                        Label("Import GGUF Models", systemImage: "square.and.arrow.down")
                     }
                 }
 
@@ -127,12 +125,11 @@ struct SettingsView: View {
                     Button("Done") { presentationMode.wrappedValue.dismiss() }
                 }
             }
-            .fileImporter(
-                isPresented: $showingImporter,
-                allowedContentTypes: [ggufType],
-                allowsMultipleSelection: true
-            ) { result in
-                importModels(result)
+            .sheet(isPresented: $showingImporter) {
+                ModelDocumentPicker(allowsMultipleSelection: true) { result in
+                    showingImporter = false
+                    importModels(result)
+                }
             }
         }
     }
