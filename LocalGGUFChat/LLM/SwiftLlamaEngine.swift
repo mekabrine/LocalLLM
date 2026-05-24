@@ -12,15 +12,20 @@ final class SwiftLlamaEngine: LLMEngine {
     func load(modelURL: URL) async throws {
         let path = modelURL.path
 
-        if isLoaded, loadedModelPath == path, swiftLlama != nil {
-            return
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw NSError(
+                domain: "SwiftLlamaEngine",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Model file is missing or cannot be opened."]
+            )
         }
 
-        swiftLlama = nil
-        loadedModelPath = path
-        loadedConfigurationKey = nil
-        swiftLlama = try SwiftLlama(modelPath: path)
-        isLoaded = true
+        if loadedModelPath != path {
+            swiftLlama = nil
+            loadedConfigurationKey = nil
+            loadedModelPath = path
+            isLoaded = false
+        }
     }
 
     func unload() async {
@@ -50,7 +55,7 @@ final class SwiftLlamaEngine: LLMEngine {
                 return
             }
 
-            let nativePrompt = Prompt(type: .llama3, userMessage: prompt)
+            let nativePrompt = Prompt(type: .chatML, userMessage: prompt)
 
             let task = Task {
                 do {
@@ -97,6 +102,13 @@ final class SwiftLlamaEngine: LLMEngine {
         if swiftLlama != nil, loadedConfigurationKey == key {
             return
         }
+
+        // Important: clear the old SwiftLlama object before constructing the new
+        // one. Its deinit calls llama_backend_free(), so replacing it after a new
+        // instance is created can invalidate the active backend and crash during
+        // tokenization.
+        swiftLlama = nil
+        isLoaded = false
 
         swiftLlama = try SwiftLlama(
             modelPath: loadedModelPath,
