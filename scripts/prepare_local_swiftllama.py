@@ -108,12 +108,30 @@ project_text = project_text.replace(
     '  SwiftLlama:\n    url: https://github.com/ShenghaiWang/SwiftLlama.git\n    from: 0.4.0',
     '  SwiftLlama:\n    path: LocalPackages/SwiftLlama'
 )
-project_text = project_text.replace('MARKETING_VERSION: "1.5"', 'MARKETING_VERSION: "1.8"')
-project_text = project_text.replace('CURRENT_PROJECT_VERSION: "6"', 'CURRENT_PROJECT_VERSION: "9"')
-project_text = project_text.replace('MARKETING_VERSION: "1.6"', 'MARKETING_VERSION: "1.8"')
-project_text = project_text.replace('CURRENT_PROJECT_VERSION: "7"', 'CURRENT_PROJECT_VERSION: "9"')
-project_text = project_text.replace('MARKETING_VERSION: "1.7"', 'MARKETING_VERSION: "1.8"')
-project_text = project_text.replace('CURRENT_PROJECT_VERSION: "8"', 'CURRENT_PROJECT_VERSION: "9"')
+for old_version in ['1.5', '1.6', '1.7', '1.8']:
+    project_text = project_text.replace(f'MARKETING_VERSION: "{old_version}"', 'MARKETING_VERSION: "1.9"')
+for old_build in ['6', '7', '8', '9']:
+    project_text = project_text.replace(f'CURRENT_PROJECT_VERSION: "{old_build}"', 'CURRENT_PROJECT_VERSION: "10"')
 project.write_text(project_text)
+
+plist = Path('LocalGGUFChat/Resources/Info.plist')
+if plist.exists():
+    plist_text = plist.read_text()
+    plist_text = re.sub(
+        r'(<key>CFBundleDisplayName</key>\s*<string>)[^<]+(</string>)',
+        r'\g<1>LocalLLM\2',
+        plist_text
+    )
+    plist_text = re.sub(
+        r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)',
+        r'\g<1>1.9\2',
+        plist_text
+    )
+    plist_text = re.sub(
+        r'(<key>CFBundleVersion</key>\s*<string>)[^<]+(</string>)',
+        r'\g<1>10\2',
+        plist_text
+    )
+    plist.write_text(plist_text)
 
 print('Prepared patched local SwiftLlama package')
