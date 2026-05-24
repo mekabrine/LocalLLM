@@ -17,29 +17,11 @@ struct NewChatView: View {
 
     @State private var title: String = ""
     @State private var selectedModel: ModelReferenceEntity?
-    @State private var createdChat: ChatEntity?
     @State private var showingImporter = false
     @State private var isImporting = false
     @State private var errorText: String?
 
     var body: some View {
-        Group {
-            if let createdChat {
-                NavigationView {
-                    ChatView(chat: createdChat)
-                        .toolbar {
-                            ToolbarItem(placement: .navigationBarLeading) {
-                                Button("Done") { presentationMode.wrappedValue.dismiss() }
-                            }
-                        }
-                }
-            } else {
-                setupView
-            }
-        }
-    }
-
-    private var setupView: some View {
         NavigationView {
             Form {
                 Section(header: Text("Chat")) {
@@ -51,7 +33,7 @@ struct NewChatView: View {
                         Text("No models yet. Import a .gguf file to add one.")
                             .foregroundColor(.secondary)
                     } else {
-                        ForEach(models) { m in
+                        ForEach(textModels) { m in
                             Button {
                                 selectedModel = m
                             } label: {
@@ -80,6 +62,22 @@ struct NewChatView: View {
                         Label("Import Model", systemImage: "square.and.arrow.down")
                     }
                     .disabled(isImporting)
+                }
+
+                Section(header: Text("Settings")) {
+                    Picker("Prompt Style", selection: $generationSettings.promptStyle) {
+                        ForEach(PromptStyle.allCases) { style in
+                            Text(style.title).tag(style)
+                        }
+                    }
+
+                    Picker("System Instructions", selection: Binding(
+                        get: { generationSettings.chatInstructions(for: nil).isEmpty ? "Use Global" : "Custom" },
+                        set: { _ in }
+                    )) {
+                        Text("Use Global").tag("Use Global")
+                    }
+                    .disabled(true)
                 }
 
                 if isImporting {
@@ -119,22 +117,28 @@ struct NewChatView: View {
         }
     }
 
+    private var textModels: [ModelReferenceEntity] {
+        Array(models).filter { model in
+            ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize).capability == .text
+        }
+    }
+
     private func selectInitialModel() {
         guard selectedModel == nil else { return }
 
         if !generationSettings.defaultModelID.isEmpty,
-           let defaultModel = models.first(where: { $0.id?.uuidString == generationSettings.defaultModelID }) {
+           let defaultModel = textModels.first(where: { $0.id?.uuidString == generationSettings.defaultModelID }) {
             selectedModel = defaultModel
             return
         }
 
-        selectedModel = models.first
+        selectedModel = textModels.first
     }
 
     private func modelSubtitle(for model: ModelReferenceEntity) -> String {
         let size = ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file)
-        let profile = GenerationProfile.profile(forFileSize: model.fileSize).title
-        return "\(size) • Auto: \(profile)"
+        let info = ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize)
+        return "\(size) • \(info.compatibility.title) • Auto: \(info.profile.title)"
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {
@@ -167,10 +171,12 @@ struct NewChatView: View {
                                     fileSize: item.fileSize
                                 )
 
-                                firstImported = firstImported ?? model
-
-                                if generationSettings.defaultModelID.isEmpty, let id = model.id {
-                                    generationSettings.defaultModelID = id.uuidString
+                                let info = ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize)
+                                if info.capability == .text {
+                                    firstImported = firstImported ?? model
+                                    if generationSettings.defaultModelID.isEmpty, let id = model.id {
+                                        generationSettings.defaultModelID = id.uuidString
+                                    }
                                 }
                             }
 
@@ -197,6 +203,6 @@ struct NewChatView: View {
         guard let selectedModel else { return }
         let chat = PersistenceController.shared.createChat(title: title, model: selectedModel)
         onCreate(chat)
-        createdChat = chat
+        presentationMode.wrappedValue.dismiss()
     }
 }
