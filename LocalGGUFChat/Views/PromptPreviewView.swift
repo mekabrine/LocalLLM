@@ -45,13 +45,23 @@ struct PromptPreviewView: View {
                 }
 
                 ForEach(previews) { preview in
-                    Section(header: Text(preview.style.title), footer: footer(for: preview)) {
+                    Section(header: Text(preview.style.title)) {
                         if preview.style == .auto {
                             HStack {
                                 Text("Auto resolved to")
                                 Spacer()
                                 Text(preview.resolvedStyle.title)
                                     .foregroundColor(.secondary)
+                            }
+                        }
+
+                        if !preview.warnings.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(preview.warnings, id: \.self) { warning in
+                                    Label(warning, systemImage: "exclamationmark.triangle")
+                                        .font(.caption)
+                                        .foregroundColor(.orange)
+                                }
                             }
                         }
 
@@ -111,11 +121,6 @@ struct PromptPreviewView: View {
             \(preview.prompt)
             """
         }.joined(separator: "\n\n")
-    }
-
-    private func footer(for preview: PromptBuilder.PromptPreview) -> Text? {
-        guard !preview.warnings.isEmpty else { return nil }
-        return Text(preview.warnings.joined(separator: "\n"))
     }
 }
 
