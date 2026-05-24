@@ -17,11 +17,29 @@ struct NewChatView: View {
 
     @State private var title: String = ""
     @State private var selectedModel: ModelReferenceEntity?
+    @State private var createdChat: ChatEntity?
     @State private var showingImporter = false
     @State private var isImporting = false
     @State private var errorText: String?
 
     var body: some View {
+        Group {
+            if let createdChat {
+                NavigationView {
+                    ChatView(chat: createdChat)
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarLeading) {
+                                Button("Done") { presentationMode.wrappedValue.dismiss() }
+                            }
+                        }
+                }
+            } else {
+                setupView
+            }
+        }
+    }
+
+    private var setupView: some View {
         NavigationView {
             Form {
                 Section(header: Text("Chat")) {
@@ -179,6 +197,6 @@ struct NewChatView: View {
         guard let selectedModel else { return }
         let chat = PersistenceController.shared.createChat(title: title, model: selectedModel)
         onCreate(chat)
-        presentationMode.wrappedValue.dismiss()
+        createdChat = chat
     }
 }
