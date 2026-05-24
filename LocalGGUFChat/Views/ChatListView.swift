@@ -22,6 +22,9 @@ struct ChatListView: View {
     @State private var showingNewChat = false
     @State private var showingSettings = false
     @State private var showingImporter = false
+    @State private var showingModelLibrary = false
+    @State private var selectedCreatedChat: ChatEntity?
+    @State private var openCreatedChat = false
     @State private var dashboardStatus: String?
     @State private var errorText: String?
 
@@ -42,35 +45,57 @@ struct ChatListView: View {
                     .padding(.top, 18)
                     .padding(.bottom, 32)
                 }
+
+                if let selectedCreatedChat {
+                    NavigationLink(
+                        destination: ChatView(chat: selectedCreatedChat),
+                        isActive: $openCreatedChat
+                    ) { EmptyView() }
+                    .hidden()
+                }
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        showingSettings = true
-                    } label: {
+                    Button { showingSettings = true } label: {
                         Image(systemName: "gearshape.fill")
                     }
                     .accessibilityLabel("Settings")
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingNewChat = true
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
+                    HStack(spacing: 14) {
+                        Button { showingModelLibrary = true } label: {
+                            Image(systemName: "library.fill")
+                        }
+                        .accessibilityLabel("Model Library")
+
+                        Button { showingNewChat = true } label: {
+                            Image(systemName: "plus.circle.fill")
+                        }
+                        .accessibilityLabel("New Chat")
                     }
-                    .accessibilityLabel("New Chat")
                 }
             }
             .sheet(isPresented: $showingNewChat) {
-                NewChatView()
-                    .environment(\.managedObjectContext, moc)
-                    .environmentObject(appState)
-                    .environmentObject(generationSettings)
+                NewChatView { chat in
+                    selectedCreatedChat = chat
+                    showingNewChat = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        openCreatedChat = true
+                    }
+                }
+                .environment(\.managedObjectContext, moc)
+                .environmentObject(appState)
+                .environmentObject(generationSettings)
             }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
+                    .environment(\.managedObjectContext, moc)
+                    .environmentObject(generationSettings)
+            }
+            .sheet(isPresented: $showingModelLibrary) {
+                ModelLibraryView()
                     .environment(\.managedObjectContext, moc)
                     .environmentObject(generationSettings)
             }
@@ -80,9 +105,7 @@ struct ChatListView: View {
                     importModels(result)
                 }
             }
-            .onAppear {
-                ensureVisibleModelsFolderExists()
-            }
+            .onAppear { ensureVisibleModelsFolderExists() }
         }
     }
 
@@ -109,8 +132,8 @@ struct ChatListView: View {
                 .font(.headline)
 
             SetupChecklistRow(isComplete: true, title: "App installed", subtitle: "LocalLLM is ready.")
-            SetupChecklistRow(isComplete: true, title: "Models folder ready", subtitle: "Files → On My iPhone → LocalGGUFChat → Models")
-            SetupChecklistRow(isComplete: !models.isEmpty, title: "Add GGUF model", subtitle: models.isEmpty ? "Move a .gguf file into the Models folder or import one." : "\(models.count) model\(models.count == 1 ? "" : "s") available.")
+            SetupChecklistRow(isComplete: true, title: "Models folder ready", subtitle: "Files → On My iPhone → LocalLLM → Models")
+            SetupChecklistRow(isComplete: !models.isEmpty, title: "Import GGUF model", subtitle: models.isEmpty ? "Import a .gguf model or move one into the Models folder." : "\(models.count) model\(models.count == 1 ? "" : "s") available.")
             SetupChecklistRow(isComplete: defaultModel != nil, title: "Choose default model", subtitle: defaultModel?.displayName ?? "Auto-selects the first model until you choose one.")
             SetupChecklistRow(isComplete: !chats.isEmpty, title: "Start first chat", subtitle: chats.isEmpty ? "Create a chat when a model is ready." : "\(chats.count) chat\(chats.count == 1 ? "" : "s") created.")
 
@@ -123,7 +146,7 @@ struct ChatListView: View {
             if let errorText {
                 Text(errorText)
                     .font(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(StudioTheme.danger)
             }
         }
         .padding(16)
@@ -131,15 +154,13 @@ struct ChatListView: View {
     }
 
     private var modelStatusCard: some View {
-        HStack(spacing: 14) {
-            Image(systemName: defaultModel == nil ? "cpu" : "cpu.fill")
-                .font(.title2)
-                .foregroundColor(defaultModel == nil ? .secondary : .accentColor)
-                .frame(width: 38, height: 38)
-                .background(Circle().fill(Color.white.opacity(0.08)))
+        let info = defaultModel.map { ModelCapabilityInfo.infer(name: $0.displayName, fileSize: $0.fileSize) }
+
+        return HStack(spacing: 14) {
+            StudioIconCircle(systemName: info?.capability.systemImage ?? "cpu", color: defaultModel == nil ? .secondary : .accentColor)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(defaultModel == nil ? "No default model" : "Default model")
+                Text(defaultModel == nil ? "No default model" : "Default Chat Model")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
                     .textCase(.uppercase)
@@ -148,13 +169,16 @@ struct ChatListView: View {
                     .font(.headline)
                     .lineLimit(1)
 
-                if let defaultModel {
-                    let profile = GenerationProfile.profile(forFileSize: defaultModel.fileSize)
-                    Text("\(ByteCountFormatter.string(fromByteCount: defaultModel.fileSize, countStyle: .file)) • Auto: \(profile.title)")
+                if let defaultModel, let info {
+                    Text("\(ByteCountFormatter.string(fromByteCount: defaultModel.fileSize, countStyle: .file)) • \(info.compatibility.title)")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    HStack(spacing: 6) {
+                        StudioBadge(title: info.profile.title, color: .accentColor)
+                        StudioBadge(title: info.capability.title, color: .accentColor)
+                    }
                 } else {
-                    Text("Scan the Models folder after adding a file.")
+                    Text("Import a model, or scan after adding one to the Models folder.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -171,46 +195,37 @@ struct ChatListView: View {
             newChatButton
 
             HStack(spacing: 12) {
-                SecondaryDashboardButton(icon: "folder.badge.gearshape", title: "Scan") {
-                    scanVisibleModelsFolder()
-                }
-
-                SecondaryDashboardButton(icon: "square.and.arrow.down", title: "Import") {
+                StudioSecondaryButton(title: "Import", systemImage: "square.and.arrow.down") {
                     showingImporter = true
                 }
 
-                SecondaryDashboardButton(icon: "slider.horizontal.3", title: "Settings") {
+                StudioSecondaryButton(title: "Models", systemImage: "library.fill") {
+                    showingModelLibrary = true
+                }
+
+                StudioSecondaryButton(title: "Settings", systemImage: "slider.horizontal.3") {
                     showingSettings = true
+                }
+            }
+
+            HStack(spacing: 12) {
+                StudioSecondaryButton(title: "Scan", systemImage: "folder.badge.gearshape") {
+                    scanVisibleModelsFolder()
+                }
+                StudioSecondaryButton(title: "Diagnostics", systemImage: "stethoscope") {
+                    dashboardStatus = "Diagnostics are available from failed chat responses and model cards."
                 }
             }
         }
     }
 
     private var newChatButton: some View {
-        Button {
+        StudioPrimaryButton(
+            title: defaultModel == nil ? "Set Up Model" : "New Chat",
+            systemImage: "square.and.pencil"
+        ) {
             showingNewChat = true
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "square.and.pencil")
-                    .font(.title3.weight(.semibold))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(defaultModel == nil ? "Set Up Model" : "New Chat")
-                        .font(.headline)
-                    Text(defaultModel == nil ? "Import or scan a GGUF model first" : "Start with your local model")
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.78))
-                }
-                Spacer()
-                Image(systemName: "arrow.right")
-                    .font(.headline)
-            }
-            .foregroundColor(.white)
-            .padding(18)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color.accentColor)
-            )
         }
     }
 
@@ -239,9 +254,7 @@ struct ChatListView: View {
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
-                        Button(role: .destructive) {
-                            delete(chat)
-                        } label: {
+                        Button(role: .destructive) { delete(chat) } label: {
                             Label("Delete Chat", systemImage: "trash")
                         }
                     }
@@ -256,23 +269,24 @@ struct ChatListView: View {
     }
 
     private func delete(_ chat: ChatEntity) {
+        if selectedCreatedChat == chat {
+            selectedCreatedChat = nil
+            openCreatedChat = false
+        }
         moc.delete(chat)
         PersistenceController.shared.save()
     }
 
     private func ensureVisibleModelsFolderExists() {
-        do {
-            _ = try ModelFileAccess.visibleModelsDirectory()
-        } catch {
-            errorText = error.localizedDescription
-        }
+        do { _ = try ModelFileAccess.visibleModelsDirectory() }
+        catch { errorText = error.localizedDescription }
     }
 
     private func scanVisibleModelsFolder() {
         do {
             let urls = try ModelFileAccess.visibleModelFileURLs()
             guard !urls.isEmpty else {
-                dashboardStatus = "No .gguf files found in LocalGGUFChat/Models."
+                dashboardStatus = "No .gguf files found in LocalLLM/Models."
                 errorText = nil
                 return
             }
@@ -297,9 +311,7 @@ struct ChatListView: View {
             dashboardStatus = count == 1 ? "Added 1 model from Models folder." : "Added \(count) models from Models folder."
             errorText = nil
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        } catch {
-            errorText = error.localizedDescription
-        }
+        } catch { errorText = error.localizedDescription }
     }
 
     private func importModels(_ result: Result<[URL], Error>) {
@@ -336,19 +348,13 @@ struct ChatListView: View {
                             }
                             dashboardStatus = count == 1 ? "Imported 1 model." : "Imported \(count) models."
                             errorText = nil
-                        } catch {
-                            errorText = error.localizedDescription
-                        }
+                        } catch { errorText = error.localizedDescription }
                     }
                 } catch {
-                    await MainActor.run {
-                        errorText = error.localizedDescription
-                    }
+                    await MainActor.run { errorText = error.localizedDescription }
                 }
             }
-        } catch {
-            errorText = error.localizedDescription
-        }
+        } catch { errorText = error.localizedDescription }
     }
 }
 
@@ -360,7 +366,7 @@ private struct SetupChecklistRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
-                .foregroundColor(isComplete ? .accentColor : .secondary)
+                .foregroundColor(isComplete ? StudioTheme.success : .secondary)
                 .font(.headline)
                 .frame(width: 22)
 
@@ -376,37 +382,12 @@ private struct SetupChecklistRow: View {
     }
 }
 
-private struct SecondaryDashboardButton: View {
-    let icon: String
-    let title: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.headline)
-                Text(title)
-                    .font(.caption.weight(.bold))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(GlassBackground(cornerRadius: 18))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 private struct ChatCard: View {
     let chat: ChatEntity
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "bubble.left.and.bubble.right.fill")
-                .font(.headline)
-                .foregroundColor(.accentColor)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(Color.white.opacity(0.08)))
+            StudioIconCircle(systemName: "bubble.left.and.bubble.right.fill", color: .accentColor, size: 34)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -457,7 +438,7 @@ private struct EmptyDashboardCard: View {
                 .foregroundColor(.secondary)
             Text(hasModel ? "No chats yet" : "Add a model first")
                 .font(.headline)
-            Text(hasModel ? "Create your first chat and start talking offline." : "Move a .gguf file into the Models folder, then tap Scan.")
+            Text(hasModel ? "Create your first chat and start talking offline." : "Import a .gguf model or move one into the Models folder, then scan.")
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
