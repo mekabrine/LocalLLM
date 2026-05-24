@@ -62,7 +62,7 @@ enum CompatibilityLevel: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-struct ModelCapabilityInfo: Hashable {
+struct ModelCapabilityInfo {
     let capability: ModelCapability
     let architecture: String
     let quantization: String
