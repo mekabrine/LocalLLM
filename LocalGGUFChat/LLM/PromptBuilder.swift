@@ -19,11 +19,7 @@ enum PromptBuilder {
         systemMessage: String,
         effectiveSettings: EffectiveGenerationSettings
     ) -> String {
-        buildResult(
-            messages: messages,
-            systemMessage: systemMessage,
-            effectiveSettings: effectiveSettings
-        ).prompt
+        buildResult(messages: messages, systemMessage: systemMessage, effectiveSettings: effectiveSettings).prompt
     }
 
     static func buildResult(
@@ -36,7 +32,34 @@ enum PromptBuilder {
             guard !text.isEmpty else { return nil }
             return PromptMessage(role: message.role, text: text)
         }
+        return buildResult(cleanedMessages: cleanedMessages, systemMessage: systemMessage, effectiveSettings: effectiveSettings)
+    }
 
+    static func previews(
+        sampleUserMessage: String,
+        systemMessage: String,
+        profile: GenerationProfile,
+        settings: GenerationSettings
+    ) -> [PromptPreview] {
+        let cleanedMessages = [PromptMessage(role: .user, text: clean(sampleUserMessage))]
+        return PromptStyle.allCases.map { style in
+            let effective = settings.previewSettings(profile: profile, promptStyle: style)
+            let result = buildResult(cleanedMessages: cleanedMessages, systemMessage: systemMessage, effectiveSettings: effective)
+            return PromptPreview(
+                id: style.rawValue,
+                style: style,
+                resolvedStyle: effective.promptStyle,
+                prompt: result.prompt,
+                warnings: result.warnings
+            )
+        }
+    }
+
+    private static func buildResult(
+        cleanedMessages: [PromptMessage],
+        systemMessage: String,
+        effectiveSettings: EffectiveGenerationSettings
+    ) -> (prompt: String, warnings: [String]) {
         let latestUserText = cleanedMessages.last(where: { $0.role == .user })?.text ?? ""
         let trimmedSystem = clean(systemMessage)
         let reasoning = reasoningInstruction(for: effectiveSettings.reasoningMode)
@@ -80,26 +103,6 @@ enum PromptBuilder {
         }
 
         return (trimmed, warnings)
-    }
-
-    static func previews(
-        sampleUserMessage: String,
-        systemMessage: String,
-        profile: GenerationProfile,
-        settings: GenerationSettings
-    ) -> [PromptPreview] {
-        let message = Message(role: .user, text: sampleUserMessage)
-        return PromptStyle.allCases.map { style in
-            let effective = settings.previewSettings(profile: profile, promptStyle: style)
-            let result = buildResult(messages: [message], systemMessage: systemMessage, effectiveSettings: effective)
-            return PromptPreview(
-                id: style.rawValue,
-                style: style,
-                resolvedStyle: effective.promptStyle,
-                prompt: result.prompt,
-                warnings: result.warnings
-            )
-        }
     }
 
     private static func tinyAssistantPrompt(latestUserText: String) -> String {
