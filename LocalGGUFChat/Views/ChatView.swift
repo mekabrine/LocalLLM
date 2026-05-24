@@ -563,7 +563,9 @@ struct ChatView: View {
                 lastDiagnostic = diagnostic
                 showingDiagnostic = generationSettings.detailedErrors
                 errorText = generationSettings.detailedErrors ? diagnostic.shortMessage : error.localizedDescription
-                assistantEntity.text = ""
+                assistantEntity.text = diagnostic.shortMessage
+                chat.updatedAt = Date()
+                PersistenceController.shared.save()
                 isGenerating = false
                 generationTask = nil
             }
