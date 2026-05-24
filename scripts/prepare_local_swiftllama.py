@@ -3,8 +3,8 @@ import re
 import shutil
 import subprocess
 
-VERSION = '1.18'
-BUILD = '19'
+VERSION = '1.20'
+BUILD = '21'
 PACKAGE_DIR = Path('LocalPackages/SwiftLlama')
 
 if PACKAGE_DIR.exists():
