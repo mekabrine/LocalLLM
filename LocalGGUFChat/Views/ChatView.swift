@@ -37,16 +37,28 @@ struct ChatView: View {
             messageList
             composer
         }
+        .background(Color.black.ignoresSafeArea())
         .navigationTitle(chat.title ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showingModelPicker = true
+                Menu {
+                    Button {
+                        showingModelPicker = true
+                    } label: {
+                        Label("Change Model", systemImage: "cpu")
+                    }
+
+                    Button {
+                        regenerateLastResponse()
+                    } label: {
+                        Label("Regenerate Last", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(isGenerating || lastUserMessage == nil)
                 } label: {
-                    Image(systemName: "cpu")
+                    Image(systemName: "ellipsis.circle")
                 }
-                .accessibilityLabel("Model")
+                .accessibilityLabel("Chat options")
             }
         }
         .sheet(isPresented: $showingSelectionModal) {
@@ -88,22 +100,25 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    LazyVStack(spacing: 8) {
                         if let model = chat.model {
                             modelHeader(model: model)
-                                .padding(.top, 8)
+                                .padding(.top, 10)
                         }
 
                         if hasOutdatedMessages {
                             outdatedBanner
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
                         }
 
                         ForEach(messages) { msg in
                             MessageRow(
                                 message: msg,
-                                onCopy: { UIPasteboard.general.string = msg.text ?? "" },
+                                onCopy: {
+                                    UIPasteboard.general.string = msg.text ?? ""
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                },
                                 onSelectText: {
                                     activeSelection = msg
                                     showingSelectionModal = true
@@ -111,6 +126,9 @@ struct ChatView: View {
                                 onEdit: {
                                     editingMessage = msg
                                     showingEditModal = true
+                                },
+                                onRegenerate: {
+                                    regenerate(message: msg)
                                 },
                                 onDeleteFromHere: { confirmDeleteFromHere = msg }
                             )
@@ -128,7 +146,7 @@ struct ChatView: View {
                 )
                 .onChange(of: messages.count) { _ in
                     if !showScrollToBottom {
-                        withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) }
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("BOTTOM", anchor: .bottom) }
                     }
                 }
                 .onAppear {
@@ -139,7 +157,7 @@ struct ChatView: View {
 
                 if showScrollToBottom {
                     Button {
-                        withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) }
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("BOTTOM", anchor: .bottom) }
                         showScrollToBottom = false
                     } label: {
                         Image(systemName: "arrow.down")
@@ -164,17 +182,17 @@ struct ChatView: View {
                     .padding(.horizontal, 14)
             }
 
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 10) {
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .fill(Color.secondary.opacity(0.16))
+                        .fill(Color.white.opacity(0.10))
                         .overlay(
                             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                .stroke(Color.secondary.opacity(0.28), lineWidth: 1)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
                         )
 
                     if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(chat.model == nil ? "Select a model first" : "Message")
+                        Text(chat.model == nil ? "Select a model first" : "Message LocalLLM")
                             .foregroundColor(.secondary)
                             .padding(.leading, 16)
                     }
@@ -201,17 +219,21 @@ struct ChatView: View {
             .padding(.bottom, 10)
         }
         .background(
-            Color(UIColor.systemBackground)
+            Color.black
                 .opacity(0.96)
                 .ignoresSafeArea(edges: .bottom)
         )
         .overlay(alignment: .top) {
-            Divider()
+            Divider().opacity(0.35)
         }
     }
 
     private var canSend: Bool {
         !isGenerating && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && chat.model != nil
+    }
+
+    private var lastUserMessage: MessageEntity? {
+        (chat.messages?.array as? [MessageEntity])?.last(where: { $0.role == MessageRole.user.rawValue })
     }
 
     private func primaryComposerAction() {
@@ -223,6 +245,7 @@ struct ChatView: View {
     }
 
     private func stopGenerating() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         generationTask?.cancel()
         generationTask = nil
         isGenerating = false
@@ -230,6 +253,7 @@ struct ChatView: View {
 
     private func send() {
         guard canSend else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         errorText = nil
         showScrollToBottom = false
 
@@ -243,6 +267,35 @@ struct ChatView: View {
 
         generationTask?.cancel()
         generationTask = Task { await generateReply(into: assistantMsg, including: userMsg) }
+    }
+
+    private func regenerateLastResponse() {
+        guard let lastUserMessage else { return }
+        if let ordered = chat.messages?.array as? [MessageEntity],
+           let lastAssistant = ordered.last(where: { $0.role == MessageRole.assistant.rawValue }) {
+            PersistenceController.shared.deleteFromHere(message: lastAssistant)
+        }
+
+        let assistantMsg = PersistenceController.shared.appendMessage(chat: chat, role: .assistant, text: "")
+        isGenerating = true
+        errorText = nil
+        generationTask?.cancel()
+        generationTask = Task { await generateReply(into: assistantMsg, including: lastUserMessage) }
+    }
+
+    private func regenerate(message: MessageEntity) {
+        guard !isGenerating, message.role == MessageRole.assistant.rawValue else { return }
+        guard let ordered = chat.messages?.array as? [MessageEntity],
+              let index = ordered.firstIndex(of: message),
+              let previousUser = ordered[..<index].reversed().first(where: { $0.role == MessageRole.user.rawValue }) else { return }
+
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        PersistenceController.shared.deleteFromHere(message: message)
+        let assistantMsg = PersistenceController.shared.appendMessage(chat: chat, role: .assistant, text: "")
+        isGenerating = true
+        errorText = nil
+        generationTask?.cancel()
+        generationTask = Task { await generateReply(into: assistantMsg, including: previousUser) }
     }
 
     private func generateReply(into assistantEntity: MessageEntity, including userEntity: MessageEntity) async {
@@ -261,15 +314,22 @@ struct ChatView: View {
                 let prompt = PromptBuilder.build(messages: history)
                 let stream = engine.generate(prompt: prompt, config: config)
 
-                var buffer = ""
+                var rawBuffer = ""
+                var visibleBuffer = ""
                 var lastPersist = Date()
 
                 for try await token in stream {
                     if Task.isCancelled { break }
-                    buffer += token
+                    rawBuffer += token
+                    let filtered = GenerationOutputFilter.filteredText(from: rawBuffer, userStops: config.stop)
+                    visibleBuffer = filtered.text
 
                     await MainActor.run {
-                        assistantEntity.text = buffer
+                        assistantEntity.text = visibleBuffer
+                    }
+
+                    if filtered.shouldStop {
+                        break
                     }
 
                     // Persist at ~4Hz to keep UI smooth without thrashing Core Data.
@@ -280,7 +340,8 @@ struct ChatView: View {
                 }
 
                 await MainActor.run {
-                    assistantEntity.text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let finalText = visibleBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                    assistantEntity.text = finalText.isEmpty ? "No response." : finalText
                     chat.updatedAt = Date()
                     PersistenceController.shared.save()
                 }
@@ -311,18 +372,26 @@ struct ChatView: View {
 
     @ViewBuilder
     private func modelHeader(model: ModelReferenceEntity) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "doc.fill")
-                .foregroundColor(.secondary)
+        HStack(spacing: 12) {
+            Image(systemName: "cpu.fill")
+                .foregroundColor(.accentColor)
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.displayName ?? "Model")
                     .font(.subheadline.weight(.bold))
-                Text("\(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file))")
+                    .lineLimit(1)
+                Text("\(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file)) • On device")
                     .font(.caption).foregroundColor(.secondary)
             }
             Spacer()
+            Text("Local")
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Color.accentColor.opacity(0.16)))
         }
-        .padding(.horizontal, 12)
+        .padding(14)
+        .background(GlassBackground(cornerRadius: 20))
+        .padding(.horizontal, 14)
     }
 
     private var outdatedBanner: some View {
@@ -332,7 +401,6 @@ struct ChatView: View {
                 .font(.caption)
             Spacer()
             Button("Clear") {
-                // Delete from first outdated message onward.
                 if let first = messages.first(where: { $0.isOutdated }) {
                     PersistenceController.shared.deleteFromHere(message: first)
                 }
@@ -349,6 +417,7 @@ private struct MessageRow: View {
     let onCopy: () -> Void
     let onSelectText: () -> Void
     let onEdit: () -> Void
+    let onRegenerate: () -> Void
     let onDeleteFromHere: () -> Void
 
     var body: some View {
@@ -361,6 +430,9 @@ private struct MessageRow: View {
             Button { onCopy() } label: { Label("Copy", systemImage: "doc.on.doc") }
             Button { onSelectText() } label: { Label("Select Text", systemImage: "selection.pin.in.out") }
             Button { onEdit() } label: { Label("Edit Message", systemImage: "pencil") }
+            if message.role == MessageRole.assistant.rawValue {
+                Button { onRegenerate() } label: { Label("Regenerate", systemImage: "arrow.clockwise") }
+            }
             Divider()
             Button(role: .destructive) { onDeleteFromHere() } label: { Label("Delete from Here", systemImage: "trash") }
         }
