@@ -104,7 +104,7 @@ enum CompatibilityLevel: String, CaseIterable, Identifiable, Hashable {
         case .risky: return "Risky"
         case .veryHighRisk: return "Very High Risk"
         case .tooLarge: return "Too Large"
-        case .unsupportedArchitecture: return "Unsupported Architecture"
+        case .unsupportedArchitecture: return "Needs Newer Backend"
         case .unknown: return "Unknown"
         }
     }
@@ -127,6 +127,7 @@ struct ModelCapabilityInfo {
         let profile = GenerationProfile.profile(forFileSize: fileSize)
         let gb = Double(fileSize) / 1_000_000_000
         let capability = purposeOverride ?? inferredPurpose(name: name)
+        let backendIssue = ModelBackendCompatibility.blockingIssue(for: name)
 
         let architecture: String
         if displayName.contains("qwen") { architecture = "Qwen" }
@@ -142,7 +143,9 @@ struct ModelCapabilityInfo {
         let quantization = Self.extractQuantization(from: displayName)
 
         let compatibility: CompatibilityLevel
-        if capability == .imageGeneration || capability == .speechToText || capability == .textToSpeech || capability == .vision {
+        if backendIssue != nil {
+            compatibility = .unsupportedArchitecture
+        } else if capability == .imageGeneration || capability == .speechToText || capability == .textToSpeech || capability == .vision {
             compatibility = .unknown
         } else if gb < 1.5 {
             compatibility = .likelySupported
@@ -164,6 +167,8 @@ struct ModelCapabilityInfo {
             warning = "This model may fail during context creation. Try Large Model Survival Mode."
         case .risky:
             warning = "This model may load slowly or fail under memory pressure."
+        case .unsupportedArchitecture:
+            warning = backendIssue ?? "This model needs a newer or different backend before it can run."
         case .unknown where capability != .unknown:
             warning = "This model is saved as \(capability.title). A dedicated backend is still required before it can run."
         case .unknown:
@@ -200,6 +205,7 @@ struct ModelCapabilityInfo {
     }
 
     private static func extractQuantization(from name: String) -> String {
+        let normalized = name.replacingOccurrences(of: "-", with: "_")
         let patterns = [
             "q8_k_p", "q8_k", "q8_0",
             "q6_k",
@@ -207,9 +213,9 @@ struct ModelCapabilityInfo {
             "q4_k_m", "q4_k_s", "q4_k", "q4_0", "q4_1",
             "q3_k_m", "q3_k_s", "q3_k_l", "q3_k",
             "q2_k",
-            "iq4_nl", "iq4_xs", "iq3_xs", "iq2_xs"
+            "ud_iq2_m", "iq2_m", "iq4_nl", "iq4_xs", "iq3_xs", "iq2_xs"
         ]
-        if let match = patterns.first(where: { name.contains($0) }) {
+        if let match = patterns.first(where: { normalized.contains($0) }) {
             return match.uppercased()
         }
         return "Unknown"
@@ -257,15 +263,19 @@ struct RuntimeDiagnostic: Identifiable, Hashable {
         let normalizedStage = normalizedStage(rawError: rawError, fallback: stage)
         let likelyCause: String
 
-        switch info.compatibility {
-        case .tooLarge, .veryHighRisk:
-            likelyCause = "This model is probably too large for this device, failed while allocating memory, or needs a newer backend."
-        case .unsupportedArchitecture:
-            likelyCause = "The model architecture may not be supported by the current backend."
-        case .unknown where info.capability != .text:
-            likelyCause = "This model needs a dedicated \(info.capability.title) backend before it can run."
-        default:
-            likelyCause = "The backend failed while loading or generating. Check the raw error and model compatibility."
+        if let issue = ModelBackendCompatibility.blockingIssue(for: model?.displayName) {
+            likelyCause = issue
+        } else {
+            switch info.compatibility {
+            case .tooLarge, .veryHighRisk:
+                likelyCause = "This model is probably too large for this device, failed while allocating memory, or needs a newer backend."
+            case .unsupportedArchitecture:
+                likelyCause = "The model architecture or quantization is not supported by the current backend."
+            case .unknown where info.capability != .text:
+                likelyCause = "This model needs a dedicated \(info.capability.title) backend before it can run."
+            default:
+                likelyCause = "The backend failed while loading or generating. Check the raw error and model compatibility."
+            }
         }
 
         let summary: String
