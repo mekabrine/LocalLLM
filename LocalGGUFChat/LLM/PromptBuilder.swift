@@ -23,8 +23,8 @@ enum PromptBuilder {
 
         let prompt: String
         switch effectiveSettings.promptStyle {
-        case .raw:
-            prompt = rawPrompt(system: trimmedSystem, reasoning: reasoning, latestUserText: latestUserText)
+        case .plain, .raw:
+            prompt = latestUserText
         case .simple, .auto:
             prompt = simplePrompt(
                 messages: cleanedMessages,
@@ -46,14 +46,6 @@ enum PromptBuilder {
         return trim(prompt, to: effectiveSettings.promptCharacterLimit)
     }
 
-    private static func rawPrompt(system: String, reasoning: String, latestUserText: String) -> String {
-        var parts: [String] = []
-        if !system.isEmpty { parts.append(system) }
-        if !reasoning.isEmpty { parts.append(reasoning) }
-        parts.append(latestUserText)
-        return parts.joined(separator: "\n\n")
-    }
-
     private static func simplePrompt(
         messages: [PromptMessage],
         system: String,
@@ -67,12 +59,13 @@ enum PromptBuilder {
 
         let recent = previousContext(from: messages, limit: historyLimit)
         if !recent.isEmpty {
-            lines.append("Helpful context from earlier:")
+            lines.append("Earlier context:")
             lines.append(recent)
         }
 
-        lines.append("Answer this directly:")
+        lines.append("Question:")
         lines.append(latestUserText)
+        lines.append("Answer:")
         return lines.joined(separator: "\n\n")
     }
 
@@ -90,14 +83,14 @@ enum PromptBuilder {
 
         let recent = previousContext(from: messages, limit: historyLimit)
         if !recent.isEmpty {
-            instruction += instruction.isEmpty ? "Helpful context:\n\(recent)" : "\n\nHelpful context:\n\(recent)"
+            instruction += instruction.isEmpty ? "Earlier context:\n\(recent)" : "\n\nEarlier context:\n\(recent)"
         }
 
         if instruction.isEmpty {
             instruction = "Answer directly and only as the assistant."
         }
 
-        return "Instruction:\n\(instruction)\n\nInput:\n\(latestUserText)\n\nAnswer:"
+        return "Task:\n\(instruction)\n\nMessage:\n\(latestUserText)\n\nReply:"
     }
 
     private static func previousContext(from messages: [PromptMessage], limit: Int) -> String {
@@ -108,9 +101,9 @@ enum PromptBuilder {
         return contextMessages.map { message in
             switch message.role {
             case .user:
-                return "Earlier request: \(message.text)"
+                return "Previous request: \(message.text)"
             case .assistant:
-                return "Earlier answer: \(message.text)"
+                return "Previous answer: \(message.text)"
             }
         }.joined(separator: "\n")
     }
@@ -120,9 +113,9 @@ enum PromptBuilder {
         case .auto, .off:
             return ""
         case .fast:
-            return "Think briefly, then give only the final answer."
+            return "Give a brief final answer."
         case .balanced:
-            return "Use a short internal plan before answering, but do not show the plan."
+            return "Check the answer before responding, but show only the final answer."
         case .deep:
             return "Think carefully and check the answer before responding, but show only the final answer."
         }
