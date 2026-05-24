@@ -1,6 +1,14 @@
 import Foundation
 
 enum PromptBuilder {
+    struct PromptPreview: Identifiable, Hashable {
+        let id: String
+        let style: PromptStyle
+        let resolvedStyle: PromptStyle
+        let prompt: String
+        let warnings: [String]
+    }
+
     private struct PromptMessage {
         let role: MessageRole
         let text: String
@@ -11,6 +19,18 @@ enum PromptBuilder {
         systemMessage: String,
         effectiveSettings: EffectiveGenerationSettings
     ) -> String {
+        buildResult(
+            messages: messages,
+            systemMessage: systemMessage,
+            effectiveSettings: effectiveSettings
+        ).prompt
+    }
+
+    static func buildResult(
+        messages: [Message],
+        systemMessage: String,
+        effectiveSettings: EffectiveGenerationSettings
+    ) -> (prompt: String, warnings: [String]) {
         let cleanedMessages = messages.compactMap { message -> PromptMessage? in
             let text = clean(message.text)
             guard !text.isEmpty else { return nil }
@@ -20,10 +40,21 @@ enum PromptBuilder {
         let latestUserText = cleanedMessages.last(where: { $0.role == .user })?.text ?? ""
         let trimmedSystem = clean(systemMessage)
         let reasoning = reasoningInstruction(for: effectiveSettings.reasoningMode)
+        var warnings: [String] = []
+
+        if effectiveSettings.usesSmallModelProtection {
+            warnings.append("Small Model Protection is active: history is limited, reasoning is disabled, and Plain uses a tiny assistant wrapper.")
+        }
 
         let prompt: String
         switch effectiveSettings.promptStyle {
-        case .plain, .raw:
+        case .plain:
+            if !trimmedSystem.isEmpty && effectiveSettings.usesSmallModelProtection {
+                warnings.append("System message ignored for Plain small-model mode.")
+            }
+            prompt = tinyAssistantPrompt(latestUserText: latestUserText)
+        case .raw:
+            warnings.append("Raw Debug sends exactly the latest user text and may cause completion-style models to continue the user's message.")
             prompt = latestUserText
         case .simple, .auto:
             prompt = simplePrompt(
@@ -43,7 +74,41 @@ enum PromptBuilder {
             )
         }
 
-        return trim(prompt, to: effectiveSettings.promptCharacterLimit)
+        let trimmed = trim(prompt, to: effectiveSettings.promptCharacterLimit)
+        if trimmed.count < prompt.count {
+            warnings.append("Prompt was trimmed to \(effectiveSettings.promptCharacterLimit) characters.")
+        }
+
+        return (trimmed, warnings)
+    }
+
+    static func previews(
+        sampleUserMessage: String,
+        systemMessage: String,
+        profile: GenerationProfile,
+        settings: GenerationSettings
+    ) -> [PromptPreview] {
+        let message = Message(role: .user, text: sampleUserMessage)
+        return PromptStyle.allCases.map { style in
+            let effective = settings.previewSettings(profile: profile, promptStyle: style)
+            let result = buildResult(messages: [message], systemMessage: systemMessage, effectiveSettings: effective)
+            return PromptPreview(
+                id: style.rawValue,
+                style: style,
+                resolvedStyle: effective.promptStyle,
+                prompt: result.prompt,
+                warnings: result.warnings
+            )
+        }
+    }
+
+    private static func tinyAssistantPrompt(latestUserText: String) -> String {
+        """
+        User message:
+        \(latestUserText)
+
+        Assistant reply:
+        """
     }
 
     private static func simplePrompt(
