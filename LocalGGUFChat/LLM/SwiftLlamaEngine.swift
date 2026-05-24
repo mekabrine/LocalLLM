@@ -2,16 +2,11 @@ import Foundation
 import SwiftLlama
 
 /// SwiftLlama-backed local GGUF engine.
-///
-/// The app keeps this behind `LLMEngine` so the UI can stream tokens without
-/// knowing about the concrete llama.cpp wrapper. `SwiftLlama` currently exposes
-/// prompt streaming through `start(for:)`; sampling controls are stored in
-/// `GenerationConfig` and applied where the wrapper exposes them. Stop handling
-/// and max-output limiting are enforced around the stream here.
 final class SwiftLlamaEngine: LLMEngine {
     private(set) var isLoaded: Bool = false
 
     private var loadedModelPath: String?
+    private var loadedConfigurationKey: String?
     private var swiftLlama: SwiftLlama?
 
     func load(modelURL: URL) async throws {
@@ -22,21 +17,28 @@ final class SwiftLlamaEngine: LLMEngine {
         }
 
         swiftLlama = nil
-        isLoaded = false
-
-        swiftLlama = try SwiftLlama(modelPath: path)
         loadedModelPath = path
+        loadedConfigurationKey = nil
+        swiftLlama = try SwiftLlama(modelPath: path)
         isLoaded = true
     }
 
     func unload() async {
         swiftLlama = nil
         loadedModelPath = nil
+        loadedConfigurationKey = nil
         isLoaded = false
     }
 
     func generate(prompt: String, config: GenerationConfig) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
+            do {
+                try ensureLoadedForGeneration(config: config)
+            } catch {
+                continuation.finish(throwing: error)
+                return
+            }
+
             guard let swiftLlama, isLoaded else {
                 continuation.finish(
                     throwing: NSError(
@@ -48,29 +50,18 @@ final class SwiftLlamaEngine: LLMEngine {
                 return
             }
 
+            let nativePrompt = Prompt(type: .llama3, userMessage: prompt)
+
             let task = Task {
                 do {
-                    var emittedText = ""
                     var approximateTokens = 0
 
-                    for try await token in await swiftLlama.start(for: prompt) {
+                    for try await token in await swiftLlama.start(for: nativePrompt) {
                         try Task.checkCancellation()
 
-                        let chunk = tokenAfterApplyingStops(
-                            token: token,
-                            accumulatedText: emittedText,
-                            stops: config.stop
-                        )
-
-                        if let chunk {
-                            if !chunk.isEmpty {
-                                emittedText += chunk
-                                approximateTokens += Self.approximateTokenCount(in: chunk)
-                                continuation.yield(chunk)
-                            }
-                        } else {
-                            continuation.finish()
-                            return
+                        if !token.isEmpty {
+                            approximateTokens += Self.approximateTokenCount(in: token)
+                            continuation.yield(token)
                         }
 
                         if config.maxTokens > 0, approximateTokens >= config.maxTokens {
@@ -93,31 +84,39 @@ final class SwiftLlamaEngine: LLMEngine {
         }
     }
 
-    private func tokenAfterApplyingStops(token: String, accumulatedText: String, stops: [String]) -> String? {
-        guard !stops.isEmpty else { return token }
-
-        let combined = accumulatedText + token
-        for stop in stops where !stop.isEmpty {
-            if let range = combined.range(of: stop) {
-                let previousLength = accumulatedText.count
-                let stopStart = combined.distance(from: combined.startIndex, to: range.lowerBound)
-
-                if stopStart <= previousLength {
-                    return nil
-                }
-
-                let safePrefixLength = stopStart - previousLength
-                let safeEnd = token.index(token.startIndex, offsetBy: safePrefixLength)
-                return String(token[..<safeEnd])
-            }
+    private func ensureLoadedForGeneration(config: GenerationConfig) throws {
+        guard let loadedModelPath else {
+            throw NSError(
+                domain: "SwiftLlamaEngine",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Model not loaded"]
+            )
         }
 
-        return token
+        let key = configurationKey(for: config)
+        if swiftLlama != nil, loadedConfigurationKey == key {
+            return
+        }
+
+        swiftLlama = try SwiftLlama(
+            modelPath: loadedModelPath,
+            modelConfiguration: Configuration(
+                topP: Float(config.topP),
+                temperature: Float(config.temperature),
+                stopSequence: nil,
+                maxTokenCount: config.maxTokens,
+                stopTokens: config.stop
+            )
+        )
+        loadedConfigurationKey = key
+        isLoaded = true
+    }
+
+    private func configurationKey(for config: GenerationConfig) -> String {
+        "\(config.temperature)|\(config.topP)|\(config.maxTokens)|\(config.stop.joined(separator: "\u{1f}"))"
     }
 
     private static func approximateTokenCount(in text: String) -> Int {
-        // A small local approximation used only because SwiftLlama's public API
-        // does not currently expose max-token generation parameters.
         max(1, Int(ceil(Double(text.count) / 4.0)))
     }
 }
