@@ -29,8 +29,8 @@ struct NewChatView: View {
                 }
 
                 Section(header: Text("Model")) {
-                    if models.isEmpty {
-                        Text("No models yet. Import a .gguf file to add one.")
+                    if textModels.isEmpty {
+                        Text("No text chat models yet. Import a .gguf file to add one.")
                             .foregroundColor(.secondary)
                     } else {
                         ForEach(textModels) { m in
@@ -59,7 +59,7 @@ struct NewChatView: View {
                     Button {
                         showingImporter = true
                     } label: {
-                        Label("Import Model", systemImage: "square.and.arrow.down")
+                        Label("Import Text Model", systemImage: "square.and.arrow.down")
                     }
                     .disabled(isImporting)
                 }
@@ -71,13 +71,11 @@ struct NewChatView: View {
                         }
                     }
 
-                    Picker("System Instructions", selection: Binding(
-                        get: { generationSettings.chatInstructions(for: nil).isEmpty ? "Use Global" : "Custom" },
-                        set: { _ in }
-                    )) {
-                        Text("Use Global").tag("Use Global")
+                    Picker("Text Model Behavior", selection: $generationSettings.textModelBehavior) {
+                        ForEach(TextModelBehavior.allCases) { behavior in
+                            Text(behavior.title).tag(behavior)
+                        }
                     }
-                    .disabled(true)
                 }
 
                 if isImporting {
@@ -119,7 +117,7 @@ struct NewChatView: View {
 
     private var textModels: [ModelReferenceEntity] {
         Array(models).filter { model in
-            ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize).capability == .text
+            ModelPurposeStore.purpose(for: model) == .text
         }
     }
 
@@ -137,7 +135,7 @@ struct NewChatView: View {
 
     private func modelSubtitle(for model: ModelReferenceEntity) -> String {
         let size = ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file)
-        let info = ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize)
+        let info = ModelCapabilityInfo.resolve(for: model)
         return "\(size) • \(info.compatibility.title) • Auto: \(info.profile.title)"
     }
 
@@ -171,12 +169,10 @@ struct NewChatView: View {
                                     fileSize: item.fileSize
                                 )
 
-                                let info = ModelCapabilityInfo.infer(name: model.displayName, fileSize: model.fileSize)
-                                if info.capability == .text {
-                                    firstImported = firstImported ?? model
-                                    if generationSettings.defaultModelID.isEmpty, let id = model.id {
-                                        generationSettings.defaultModelID = id.uuidString
-                                    }
+                                ModelPurposeStore.setPurpose(.text, for: model)
+                                firstImported = firstImported ?? model
+                                if generationSettings.defaultModelID.isEmpty, let id = model.id {
+                                    generationSettings.defaultModelID = id.uuidString
                                 }
                             }
 
