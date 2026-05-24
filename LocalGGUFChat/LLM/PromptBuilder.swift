@@ -1,14 +1,21 @@
 import Foundation
 
 enum PromptBuilder {
+    private struct PromptMessage {
+        let role: MessageRole
+        let text: String
+    }
+
     static func build(
         messages: [Message],
         systemMessage: String,
         effectiveSettings: EffectiveGenerationSettings
     ) -> String {
-        let cleanedMessages = messages
-            .map { Message(role: $0.role, text: clean($0.text)) }
-            .filter { !$0.text.isEmpty }
+        let cleanedMessages = messages.compactMap { message -> PromptMessage? in
+            let text = clean(message.text)
+            guard !text.isEmpty else { return nil }
+            return PromptMessage(role: message.role, text: text)
+        }
 
         let latestUserText = cleanedMessages.last(where: { $0.role == .user })?.text ?? ""
         let trimmedSystem = clean(systemMessage)
@@ -48,7 +55,7 @@ enum PromptBuilder {
     }
 
     private static func simplePrompt(
-        messages: [Message],
+        messages: [PromptMessage],
         system: String,
         reasoning: String,
         latestUserText: String,
@@ -70,7 +77,7 @@ enum PromptBuilder {
     }
 
     private static func instructPrompt(
-        messages: [Message],
+        messages: [PromptMessage],
         system: String,
         reasoning: String,
         latestUserText: String,
@@ -93,13 +100,11 @@ enum PromptBuilder {
         return "Instruction:\n\(instruction)\n\nInput:\n\(latestUserText)\n\nAnswer:"
     }
 
-    private static func previousContext(from messages: [Message], limit: Int) -> String {
+    private static func previousContext(from messages: [PromptMessage], limit: Int) -> String {
         guard limit > 1 else { return "" }
+        guard messages.count > 1 else { return "" }
 
-        let nonEmpty = messages.filter { !$0.text.isEmpty }
-        guard nonEmpty.count > 1 else { return "" }
-
-        let contextMessages = nonEmpty.dropLast().suffix(max(0, limit - 1))
+        let contextMessages = messages.dropLast().suffix(max(0, limit - 1))
         return contextMessages.map { message in
             switch message.role {
             case .user:
