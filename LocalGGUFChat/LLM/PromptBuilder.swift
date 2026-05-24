@@ -35,6 +35,7 @@ enum PromptBuilder {
         return buildResult(cleanedMessages: cleanedMessages, systemMessage: systemMessage, effectiveSettings: effectiveSettings)
     }
 
+    @MainActor
     static func previews(
         sampleUserMessage: String,
         systemMessage: String,
@@ -53,6 +54,10 @@ enum PromptBuilder {
                 warnings: result.warnings
             )
         }
+    }
+
+    static func tinyAssistantRetryPrompt(userText: String) -> String {
+        tinyAssistantPrompt(latestUserText: clean(userText))
     }
 
     private static func buildResult(
@@ -107,6 +112,8 @@ enum PromptBuilder {
 
     private static func tinyAssistantPrompt(latestUserText: String) -> String {
         """
+        You are the assistant. Write only a short assistant reply to the user. Do not continue the user's message.
+
         User message:
         \(latestUserText)
 
