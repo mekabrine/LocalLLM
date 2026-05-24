@@ -17,7 +17,6 @@ struct ModelPickerModal: View {
     @State private var errorText: String?
 
     private let onPick: (ModelReferenceEntity?) -> Void
-    private var ggufType: UTType { UTType(filenameExtension: "gguf") ?? .data }
 
     init(selected: ModelReferenceEntity?, onPick: @escaping (ModelReferenceEntity?) -> Void) {
         _selected = State(initialValue: selected)
@@ -63,7 +62,7 @@ struct ModelPickerModal: View {
                     Button {
                         showingImporter = true
                     } label: {
-                        Label("Import .gguf Files", systemImage: "doc")
+                        Label("Import GGUF Model", systemImage: "doc")
                     }
                 }
 
@@ -85,12 +84,11 @@ struct ModelPickerModal: View {
                     .disabled(selected == nil)
                 }
             }
-            .fileImporter(
-                isPresented: $showingImporter,
-                allowedContentTypes: [ggufType],
-                allowsMultipleSelection: true
-            ) { result in
-                handleImport(result)
+            .sheet(isPresented: $showingImporter) {
+                ModelDocumentPicker(allowsMultipleSelection: true) { result in
+                    showingImporter = false
+                    handleImport(result)
+                }
             }
         }
     }
