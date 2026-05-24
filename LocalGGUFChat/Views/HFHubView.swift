@@ -26,6 +26,24 @@ struct HFHubView: View {
                     if let message { Text(message).font(.caption).foregroundColor(.secondary) }
                 }
 
+                Section(header: Text("Access Token"), footer: Text("Optional. Public models work without a token. Save a read token for gated or private models.")) {
+                    SecureField("hf_...", text: $token)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+                    HStack {
+                        Button("Save Token") {
+                            HuggingFaceTokenStore.saveToken(token)
+                            message = token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Token cleared." : "Token saved."
+                        }
+                        Spacer()
+                        Button("Clear") {
+                            token = ""
+                            HuggingFaceTokenStore.deleteToken()
+                            message = "Token cleared."
+                        }
+                    }
+                }
+
                 Section(header: Text("Transfers")) {
                     if store.downloads.isEmpty {
                         Text("No transfers yet.").foregroundColor(.secondary)
