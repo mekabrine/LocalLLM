@@ -16,6 +16,7 @@ struct NewChatView: View {
     @State private var title: String = ""
     @State private var selectedModel: ModelReferenceEntity?
     @State private var showingImporter = false
+    @State private var isImporting = false
     @State private var errorText: String?
 
     var body: some View {
@@ -47,6 +48,7 @@ struct NewChatView: View {
                                     }
                                 }
                             }
+                            .disabled(isImporting)
                         }
                     }
 
@@ -54,6 +56,17 @@ struct NewChatView: View {
                         showingImporter = true
                     } label: {
                         Label("Import .gguf Files", systemImage: "doc")
+                    }
+                    .disabled(isImporting)
+                }
+
+                if isImporting {
+                    Section {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Importing model… Keep the app open.")
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
 
@@ -67,10 +80,11 @@ struct NewChatView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { presentationMode.wrappedValue.dismiss() }
+                        .disabled(isImporting)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Create") { createChat() }
-                        .disabled(selectedModel == nil)
+                        .disabled(selectedModel == nil || isImporting)
                 }
             }
             .onAppear(perform: selectInitialModel)
@@ -100,24 +114,52 @@ struct NewChatView: View {
             let urls = try result.get()
             guard !urls.isEmpty else { return }
 
-            var firstImported: ModelReferenceEntity?
-            for url in urls {
-                let model = try PersistenceController.shared.upsertModel(
-                    from: try ModelFileAccess.makeBookmark(for: url),
-                    displayName: ModelFileAccess.displayName(for: url),
-                    originalPath: url.path,
-                    fileSize: ModelFileAccess.fileSize(at: url)
-                )
+            isImporting = true
+            errorText = nil
 
-                firstImported = firstImported ?? model
+            Task {
+                do {
+                    var imported: [(bookmark: Data, displayName: String, originalPath: String, fileSize: Int64)] = []
+                    for url in urls {
+                        let displayName = ModelFileAccess.displayName(for: url)
+                        let originalPath = url.path
+                        let fileSize = ModelFileAccess.fileSize(at: url)
+                        let bookmark = try await ModelFileAccess.makeBookmarkAsync(for: url)
+                        imported.append((bookmark, displayName, originalPath, fileSize))
+                    }
 
-                if generationSettings.defaultModelID.isEmpty, let id = model.id {
-                    generationSettings.defaultModelID = id.uuidString
+                    await MainActor.run {
+                        var firstImported: ModelReferenceEntity?
+                        do {
+                            for item in imported {
+                                let model = try PersistenceController.shared.upsertModel(
+                                    from: item.bookmark,
+                                    displayName: item.displayName,
+                                    originalPath: item.originalPath,
+                                    fileSize: item.fileSize
+                                )
+
+                                firstImported = firstImported ?? model
+
+                                if generationSettings.defaultModelID.isEmpty, let id = model.id {
+                                    generationSettings.defaultModelID = id.uuidString
+                                }
+                            }
+
+                            selectedModel = firstImported ?? selectedModel
+                            errorText = nil
+                        } catch {
+                            errorText = error.localizedDescription
+                        }
+                        isImporting = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        errorText = error.localizedDescription
+                        isImporting = false
+                    }
                 }
             }
-
-            selectedModel = firstImported ?? selectedModel
-            errorText = nil
         } catch {
             errorText = error.localizedDescription
         }
