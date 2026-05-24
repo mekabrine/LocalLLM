@@ -1,4 +1,3 @@
-
 import SwiftUI
 import CoreData
 import UniformTypeIdentifiers
@@ -6,6 +5,7 @@ import UniformTypeIdentifiers
 struct NewChatView: View {
     @Environment(\.managedObjectContext) private var moc
     @Environment(\.presentationMode) private var presentationMode
+    @EnvironmentObject private var generationSettings: GenerationSettings
 
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \ModelReferenceEntity.createdAt, ascending: false)],
@@ -29,7 +29,7 @@ struct NewChatView: View {
 
                 Section(header: Text("Model")) {
                     if models.isEmpty {
-                        Text("No models yet. Pick a .gguf file to add one.").foregroundColor(.secondary)
+                        Text("No models yet. Import .gguf files to add them.").foregroundColor(.secondary)
                     } else {
                         ForEach(models) { m in
                             Button {
@@ -55,7 +55,7 @@ struct NewChatView: View {
                     Button {
                         showingImporter = true
                     } label: {
-                        Label("Pick .gguf from Files", systemImage: "doc")
+                        Label("Import .gguf Files", systemImage: "doc")
                     }
                 }
 
@@ -75,32 +75,51 @@ struct NewChatView: View {
                         .disabled(selectedModel == nil)
                 }
             }
+            .onAppear(perform: selectInitialModel)
             .fileImporter(
                 isPresented: $showingImporter,
                 allowedContentTypes: [ggufType],
-                allowsMultipleSelection: false
+                allowsMultipleSelection: true
             ) { result in
                 handleImport(result)
             }
         }
     }
 
+    private func selectInitialModel() {
+        guard selectedModel == nil else { return }
+
+        if !generationSettings.defaultModelID.isEmpty,
+           let defaultModel = models.first(where: { $0.id?.uuidString == generationSettings.defaultModelID }) {
+            selectedModel = defaultModel
+            return
+        }
+
+        selectedModel = models.first
+    }
+
     private func handleImport(_ result: Result<[URL], Error>) {
         do {
             let urls = try result.get()
-            guard let url = urls.first else { return }
+            guard !urls.isEmpty else { return }
 
-            let bookmark = try ModelFileAccess.makeBookmark(for: url)
-            let name = ModelFileAccess.displayName(for: url)
-            let size = ModelFileAccess.fileSize(at: url)
+            var firstImported: ModelReferenceEntity?
+            for url in urls {
+                let model = try PersistenceController.shared.upsertModel(
+                    from: try ModelFileAccess.makeBookmark(for: url),
+                    displayName: ModelFileAccess.displayName(for: url),
+                    originalPath: url.path,
+                    fileSize: ModelFileAccess.fileSize(at: url)
+                )
 
-            let model = try PersistenceController.shared.upsertModel(
-                from: bookmark,
-                displayName: name,
-                originalPath: url.path,
-                fileSize: size
-            )
-            selectedModel = model
+                firstImported = firstImported ?? model
+
+                if generationSettings.defaultModelID.isEmpty, let id = model.id {
+                    generationSettings.defaultModelID = id.uuidString
+                }
+            }
+
+            selectedModel = firstImported ?? selectedModel
             errorText = nil
         } catch {
             errorText = error.localizedDescription
