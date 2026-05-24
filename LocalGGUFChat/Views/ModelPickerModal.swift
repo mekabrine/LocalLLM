@@ -14,6 +14,7 @@ struct ModelPickerModal: View {
 
     @State private var selected: ModelReferenceEntity?
     @State private var showingImporter = false
+    @State private var isImporting = false
     @State private var errorText: String?
 
     private let onPick: (ModelReferenceEntity?) -> Void
@@ -57,12 +58,24 @@ struct ModelPickerModal: View {
                                 if selected == m { Image(systemName: "checkmark").foregroundColor(.accentColor) }
                             }
                         }
+                        .disabled(isImporting)
                     }
 
                     Button {
                         showingImporter = true
                     } label: {
                         Label("Import GGUF Model", systemImage: "doc")
+                    }
+                    .disabled(isImporting)
+                }
+
+                if isImporting {
+                    Section {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Importing model. Keep the app open.")
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
 
@@ -75,13 +88,14 @@ struct ModelPickerModal: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { presentationMode.wrappedValue.dismiss() }
+                        .disabled(isImporting)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Use") {
                         onPick(selected)
                         presentationMode.wrappedValue.dismiss()
                     }
-                    .disabled(selected == nil)
+                    .disabled(selected == nil || isImporting)
                 }
             }
             .sheet(isPresented: $showingImporter) {
@@ -98,19 +112,47 @@ struct ModelPickerModal: View {
             let urls = try result.get()
             guard !urls.isEmpty else { return }
 
-            var firstImported: ModelReferenceEntity?
-            for url in urls {
-                let model = try PersistenceController.shared.upsertModel(
-                    from: try ModelFileAccess.makeBookmark(for: url),
-                    displayName: ModelFileAccess.displayName(for: url),
-                    originalPath: url.path,
-                    fileSize: ModelFileAccess.fileSize(at: url)
-                )
-                firstImported = firstImported ?? model
-            }
-
-            selected = firstImported ?? selected
+            isImporting = true
             errorText = nil
+
+            Task {
+                do {
+                    var imported: [(Data, String, String, Int64)] = []
+                    for url in urls {
+                        let displayName = ModelFileAccess.displayName(for: url)
+                        let originalPath = url.path
+                        let fileSize = ModelFileAccess.fileSize(at: url)
+                        let bookmark = try await ModelFileAccess.makeBookmarkAsync(for: url)
+                        imported.append((bookmark, displayName, originalPath, fileSize))
+                    }
+
+                    await MainActor.run {
+                        var firstImported: ModelReferenceEntity?
+                        do {
+                            for item in imported {
+                                let model = try PersistenceController.shared.upsertModel(
+                                    from: item.0,
+                                    displayName: item.1,
+                                    originalPath: item.2,
+                                    fileSize: item.3
+                                )
+                                firstImported = firstImported ?? model
+                            }
+
+                            selected = firstImported ?? selected
+                            errorText = nil
+                        } catch {
+                            errorText = error.localizedDescription
+                        }
+                        isImporting = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        errorText = error.localizedDescription
+                        isImporting = false
+                    }
+                }
+            }
         } catch {
             errorText = error.localizedDescription
         }
