@@ -96,8 +96,8 @@ final class GenerationSettings: ObservableObject {
         }
 
         let maxTokensOverride = survivalModel ? min(profile.maxTokens, 96) : profile.maxTokens
-        let historyLimitOverride = protectedSmallModel || survivalModel ? 1 : profile.historyLimit
-        let promptLimitOverride = protectedSmallModel ? min(profile.promptCharacterLimit, 500) : (survivalModel ? min(profile.promptCharacterLimit, 800) : profile.promptCharacterLimit)
+        let historyLimitOverride = survivalModel ? 2 : profile.historyLimit
+        let promptLimitOverride = survivalModel ? min(profile.promptCharacterLimit, 800) : profile.promptCharacterLimit
 
         return EffectiveGenerationSettings(
             profile: profile,
@@ -276,7 +276,7 @@ enum PromptStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
     var subtitle: String {
         switch self {
         case .auto: return "Uses the safest style for the selected model size."
-        case .plain: return "Tiny assistant wrapper. Best for small/base models."
+        case .plain: return "Tiny assistant wrapper with compact memory. Best for small/base models."
         case .raw: return "Sends exactly the user text. Debug only."
         case .simple: return "Short assistant prompt with no chat transcript labels."
         case .instruct: return "Instruction format for stronger instruct-tuned models."
@@ -464,15 +464,15 @@ struct GenerationProfile: Sendable {
     static func profile(forFileSize bytes: Int64) -> GenerationProfile {
         let gb = Double(bytes) / 1_000_000_000
         if gb < 1.5 {
-            return GenerationProfile(kind: .small, title: "Small Model", subtitle: "Tiny assistant wrapper, short replies, latest message only.", maxTokens: 96, temperature: 0.55, topP: 0.85, historyLimit: 1, promptCharacterLimit: 500, manualHistoryLimit: 2, manualPromptCharacterLimit: 800)
+            return GenerationProfile(kind: .small, title: "Small Model", subtitle: "Tiny assistant wrapper, compact memory, short replies.", maxTokens: 96, temperature: 0.55, topP: 0.85, historyLimit: 8, promptCharacterLimit: 1_400, manualHistoryLimit: 8, manualPromptCharacterLimit: 1_600)
         }
         if gb < 4.0 {
-            return GenerationProfile(kind: .medium, title: "Medium Model", subtitle: "Balanced context and output length.", maxTokens: 256, temperature: 0.75, topP: 0.92, historyLimit: 4, promptCharacterLimit: 2_000, manualHistoryLimit: 6, manualPromptCharacterLimit: 3_000)
+            return GenerationProfile(kind: .medium, title: "Medium Model", subtitle: "Balanced context and output length.", maxTokens: 256, temperature: 0.75, topP: 0.92, historyLimit: 6, promptCharacterLimit: 2_400, manualHistoryLimit: 8, manualPromptCharacterLimit: 3_200)
         }
         if gb < 8.0 {
-            return GenerationProfile(kind: .large, title: "Large Model", subtitle: "More context and longer answers, but may be memory heavy.", maxTokens: 320, temperature: 0.75, topP: 0.92, historyLimit: 6, promptCharacterLimit: 3_000, manualHistoryLimit: 8, manualPromptCharacterLimit: 4_000)
+            return GenerationProfile(kind: .large, title: "Large Model", subtitle: "More context and longer answers, but may be memory heavy.", maxTokens: 320, temperature: 0.75, topP: 0.92, historyLimit: 8, promptCharacterLimit: 3_200, manualHistoryLimit: 10, manualPromptCharacterLimit: 4_200)
         }
-        return GenerationProfile(kind: .veryLarge, title: "Very Large Model", subtitle: "Conservative defaults to reduce memory pressure.", maxTokens: 128, temperature: 0.65, topP: 0.9, historyLimit: 1, promptCharacterLimit: 900, manualHistoryLimit: 3, manualPromptCharacterLimit: 1_500)
+        return GenerationProfile(kind: .veryLarge, title: "Very Large Model", subtitle: "Conservative defaults to reduce memory pressure.", maxTokens: 128, temperature: 0.65, topP: 0.9, historyLimit: 2, promptCharacterLimit: 1_000, manualHistoryLimit: 4, manualPromptCharacterLimit: 1_600)
     }
 }
 
