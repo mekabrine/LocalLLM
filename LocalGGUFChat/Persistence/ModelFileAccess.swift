@@ -77,6 +77,12 @@ enum ModelFileAccess {
 
     private static func moveOrCopyModelIntoAppStorage(from sourceURL: URL) throws -> URL {
         let fileManager = FileManager.default
+        let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccessing {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
 
         guard fileManager.fileExists(atPath: sourceURL.path) else {
             throw ImportError.fileMissing(sourceURL)
@@ -97,13 +103,6 @@ enum ModelFileAccess {
             in: modelsDirectory,
             preferredName: sourceURL.lastPathComponent
         )
-
-        let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
-        defer {
-            if didStartAccessing {
-                sourceURL.stopAccessingSecurityScopedResource()
-            }
-        }
 
         do {
             try fileManager.moveItem(at: sourceURL, to: destinationURL)
