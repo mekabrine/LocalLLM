@@ -73,20 +73,71 @@ final class GenerationSettings: ObservableObject {
         )
     }
 
+    func applyPreset(_ preset: GenerationPreset) {
+        temperature = preset.temperature
+        topP = preset.topP
+        maxTokens = preset.maxTokens
+    }
+
     func resetSamplingDefaults() {
-        temperature = 0.8
-        topP = 0.95
-        maxTokens = 512
+        applyPreset(.balanced)
         stopSequencesText = "User:"
     }
 
     private func registerDefaults() {
         defaults.register(defaults: [
-            Keys.temperature: 0.8,
-            Keys.topP: 0.95,
-            Keys.maxTokens: 512,
+            Keys.temperature: GenerationPreset.balanced.temperature,
+            Keys.topP: GenerationPreset.balanced.topP,
+            Keys.maxTokens: GenerationPreset.balanced.maxTokens,
             Keys.stopSequences: "User:",
             Keys.defaultModelID: ""
         ])
     }
+}
+
+struct GenerationPreset: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let temperature: Double
+    let topP: Double
+    let maxTokens: Int
+
+    static let balanced = GenerationPreset(
+        id: "balanced",
+        title: "Balanced",
+        subtitle: "Good default for small local models",
+        temperature: 0.8,
+        topP: 0.95,
+        maxTokens: 384
+    )
+
+    static let precise = GenerationPreset(
+        id: "precise",
+        title: "Precise",
+        subtitle: "More predictable answers",
+        temperature: 0.35,
+        topP: 0.85,
+        maxTokens: 256
+    )
+
+    static let creative = GenerationPreset(
+        id: "creative",
+        title: "Creative",
+        subtitle: "More varied responses",
+        temperature: 1.05,
+        topP: 0.95,
+        maxTokens: 512
+    )
+
+    static let fast = GenerationPreset(
+        id: "fast",
+        title: "Fast",
+        subtitle: "Shorter responses",
+        temperature: 0.7,
+        topP: 0.9,
+        maxTokens: 192
+    )
+
+    static let all: [GenerationPreset] = [.balanced, .precise, .creative, .fast]
 }
