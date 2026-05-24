@@ -12,6 +12,7 @@ struct ChatView: View {
     @FetchRequest private var messages: FetchedResults<MessageEntity>
 
     @State private var inputText: String = ""
+    @State private var composerTextHeight: CGFloat = 42
     @State private var isGenerating: Bool = false
     @State private var generationTask: Task<Void, Never>?
     @State private var activeSelection: MessageEntity?
@@ -20,8 +21,12 @@ struct ChatView: View {
     @State private var showingEditModal = false
     @State private var confirmDeleteFromHere: MessageEntity?
     @State private var showingModelPicker = false
+    @State private var showingChatInstructions = false
     @State private var errorText: String?
     @State private var showScrollToBottom: Bool = false
+
+    private let composerMinHeight: CGFloat = 42
+    private let composerMaxHeight: CGFloat = 210
 
     init(chat: ChatEntity) {
         self.chat = chat
@@ -43,6 +48,12 @@ struct ChatView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
+                    Button {
+                        showingChatInstructions = true
+                    } label: {
+                        Label("Chat Instructions", systemImage: "slider.horizontal.3")
+                    }
+
                     Button {
                         showingModelPicker = true
                     } label: {
@@ -80,6 +91,10 @@ struct ChatView: View {
                 PersistenceController.shared.save()
             }
             .environment(\.managedObjectContext, moc)
+        }
+        .sheet(isPresented: $showingChatInstructions) {
+            ChatInstructionsView(chat: chat)
+                .environmentObject(generationSettings)
         }
         .alert(item: $confirmDeleteFromHere) { msg in
             Alert(
@@ -149,6 +164,11 @@ struct ChatView: View {
                         withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("BOTTOM", anchor: .bottom) }
                     }
                 }
+                .onChange(of: messages.last?.text) { _ in
+                    if !showScrollToBottom {
+                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("BOTTOM", anchor: .bottom) }
+                    }
+                }
                 .onAppear {
                     DispatchQueue.main.async {
                         proxy.scrollTo("BOTTOM", anchor: .bottom)
@@ -183,7 +203,7 @@ struct ChatView: View {
             }
 
             HStack(alignment: .bottom, spacing: 10) {
-                ZStack(alignment: .leading) {
+                ZStack(alignment: .topLeading) {
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .fill(Color.white.opacity(0.10))
                         .overlay(
@@ -195,16 +215,22 @@ struct ChatView: View {
                         Text(chat.model == nil ? "Select a model first" : "Message LocalLLM")
                             .foregroundColor(.secondary)
                             .padding(.leading, 16)
+                            .padding(.top, 13)
                     }
 
-                    GrowingTextEditor(text: $inputText, minHeight: 38, maxHeight: 92) {
+                    GrowingTextEditor(
+                        text: $inputText,
+                        measuredHeight: $composerTextHeight,
+                        minHeight: composerMinHeight,
+                        maxHeight: composerMaxHeight
+                    ) {
                         if canSend { send() }
                     }
-                    .frame(height: 42)
+                    .frame(height: composerTextHeight)
                     .padding(.leading, 8)
                     .padding(.trailing, 6)
                 }
-                .frame(height: 50)
+                .frame(height: composerTextHeight + 8)
 
                 Button(action: primaryComposerAction) {
                     Image(systemName: isGenerating ? "stop.circle.fill" : "arrow.up.circle.fill")
@@ -299,20 +325,39 @@ struct ChatView: View {
     }
 
     private func generateReply(into assistantEntity: MessageEntity, including userEntity: MessageEntity) async {
+        var displayDriver: ResponseDisplayDriver?
+
         do {
             guard let modelEntity = chat.model else {
                 throw NSError(domain: "ChatView", code: 1, userInfo: [NSLocalizedDescriptionKey: "No model selected"])
             }
+
             let model = ModelReference(modelEntity)
             let engine = appState.engine(for: model.id)
-            let config = await MainActor.run { generationSettings.generationConfig }
+            let effective = await MainActor.run { generationSettings.effectiveSettings(forModelSize: modelEntity.fileSize) }
+            let systemMessage = await MainActor.run { generationSettings.combinedSystemMessage(for: chat.id) }
+            let liveDisplay = await MainActor.run { generationSettings.liveDisplayMode }
+            let typingSpeed = await MainActor.run { generationSettings.typingCharactersPerSecond }
+
+            await MainActor.run {
+                assistantEntity.text = thinkingText(for: effective.reasoningMode)
+                displayDriver = ResponseDisplayDriver(
+                    message: assistantEntity,
+                    mode: liveDisplay,
+                    charactersPerSecond: typingSpeed
+                )
+            }
 
             try await ModelFileAccess.withSecurityScopedURLAsync(bookmark: model.bookmark) { url in
                 try await engine.load(modelURL: url)
 
                 let history = messages.map(Message.init)
-                let prompt = PromptBuilder.build(messages: history)
-                let stream = engine.generate(prompt: prompt, config: config)
+                let prompt = PromptBuilder.build(
+                    messages: history,
+                    systemMessage: systemMessage,
+                    effectiveSettings: effective
+                )
+                let stream = engine.generate(prompt: prompt, config: effective.config)
 
                 var rawBuffer = ""
                 var visibleBuffer = ""
@@ -321,19 +366,18 @@ struct ChatView: View {
                 for try await token in stream {
                     if Task.isCancelled { break }
                     rawBuffer += token
-                    let filtered = GenerationOutputFilter.filteredText(from: rawBuffer, userStops: config.stop)
+                    let filtered = GenerationOutputFilter.filteredText(from: rawBuffer, userStops: effective.config.stop)
                     visibleBuffer = filtered.text
 
                     await MainActor.run {
-                        assistantEntity.text = visibleBuffer
+                        displayDriver?.updateTarget(visibleBuffer)
                     }
 
                     if filtered.shouldStop {
                         break
                     }
 
-                    // Persist at ~4Hz to keep UI smooth without thrashing Core Data.
-                    if Date().timeIntervalSince(lastPersist) > 0.25 {
+                    if Date().timeIntervalSince(lastPersist) > 0.35 {
                         await MainActor.run { PersistenceController.shared.save() }
                         lastPersist = Date()
                     }
@@ -341,9 +385,12 @@ struct ChatView: View {
 
                 await MainActor.run {
                     let finalText = visibleBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
-                    assistantEntity.text = finalText.isEmpty ? "No response." : finalText
-                    chat.updatedAt = Date()
-                    PersistenceController.shared.save()
+                    let textToSave = finalText.isEmpty ? "No response." : finalText
+                    Task { @MainActor in
+                        await displayDriver?.finish(finalText: textToSave)
+                        chat.updatedAt = Date()
+                        PersistenceController.shared.save()
+                    }
                 }
             }
 
@@ -353,16 +400,31 @@ struct ChatView: View {
             }
         } catch is CancellationError {
             await MainActor.run {
+                displayDriver?.cancel()
                 isGenerating = false
                 generationTask = nil
                 PersistenceController.shared.save()
             }
         } catch {
             await MainActor.run {
+                displayDriver?.cancel()
                 errorText = error.localizedDescription
                 isGenerating = false
                 generationTask = nil
             }
+        }
+    }
+
+    private func thinkingText(for mode: ReasoningMode) -> String {
+        switch mode {
+        case .deep:
+            return "Thinking deeply…"
+        case .balanced:
+            return "Thinking…"
+        case .fast, .auto:
+            return "Thinking…"
+        case .off:
+            return ""
         }
     }
 
@@ -372,6 +434,7 @@ struct ChatView: View {
 
     @ViewBuilder
     private func modelHeader(model: ModelReferenceEntity) -> some View {
+        let profile = GenerationProfile.profile(forFileSize: model.fileSize)
         HStack(spacing: 12) {
             Image(systemName: "cpu.fill")
                 .foregroundColor(.accentColor)
@@ -379,11 +442,11 @@ struct ChatView: View {
                 Text(model.displayName ?? "Model")
                     .font(.subheadline.weight(.bold))
                     .lineLimit(1)
-                Text("\(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file)) • On device")
+                Text("\(ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file)) • Auto: \(profile.title)")
                     .font(.caption).foregroundColor(.secondary)
             }
             Spacer()
-            Text("Local")
+            Text(generationSettings.generationMode == .auto ? "Auto" : "Manual")
                 .font(.caption2.weight(.bold))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
