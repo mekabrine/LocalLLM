@@ -91,9 +91,9 @@ struct ModelFolderManagerView: View {
                     if matchingModel == nil {
                         Button("Import as \(selectedPurpose.importTitle)") { importFile(file, purpose: selectedPurpose) }
                     } else if let purpose {
-                        Text("Imported as \(purpose.title)")
+                        Button("Imported as \(purpose.title)") { }
+                            .disabled(true)
                     }
-                    Button("Copy Path") { UIPasteboard.general.string = file.url.path }
                     Button(role: .destructive) { deleteFile(file) } label: { Text("Delete File") }
                 } label: {
                     Image(systemName: "ellipsis.circle")
