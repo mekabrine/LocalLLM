@@ -7,8 +7,7 @@ options:
 
 packages:
   SwiftLlama:
-    url: https://github.com/ShenghaiWang/SwiftLlama.git
-    from: 0.4.0
+    path: LocalPackages/SwiftLlama
 
 targets:
   LocalGGUFChat:
@@ -26,8 +25,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mekabrine.localllm
-        MARKETING_VERSION: "1.21"
-        CURRENT_PROJECT_VERSION: "22"
+        MARKETING_VERSION: "1.22"
+        CURRENT_PROJECT_VERSION: "23"
         SWIFT_VERSION: "5.0"
     dependencies:
       - package: SwiftLlama
