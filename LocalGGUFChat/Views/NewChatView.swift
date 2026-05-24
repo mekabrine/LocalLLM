@@ -7,6 +7,8 @@ struct NewChatView: View {
     @Environment(\.presentationMode) private var presentationMode
     @EnvironmentObject private var generationSettings: GenerationSettings
 
+    var onCreate: (ChatEntity) -> Void = { _ in }
+
     @FetchRequest(
         sortDescriptors: [NSSortDescriptor(keyPath: \ModelReferenceEntity.createdAt, ascending: false)],
         animation: .default
@@ -28,7 +30,8 @@ struct NewChatView: View {
 
                 Section(header: Text("Model")) {
                     if models.isEmpty {
-                        Text("No models yet. Import .gguf files to add them.").foregroundColor(.secondary)
+                        Text("No models yet. Import a .gguf file to add one.")
+                            .foregroundColor(.secondary)
                     } else {
                         ForEach(models) { m in
                             Button {
@@ -37,9 +40,10 @@ struct NewChatView: View {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(m.displayName ?? "Model")
-                                        if let path = m.originalPath {
-                                            Text(path).font(.caption).foregroundColor(.secondary).lineLimit(1)
-                                        }
+                                        Text(modelSubtitle(for: m))
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
                                     }
                                     Spacer()
                                     if selectedModel == m {
@@ -55,7 +59,7 @@ struct NewChatView: View {
                     Button {
                         showingImporter = true
                     } label: {
-                        Label("Import .gguf Files", systemImage: "doc")
+                        Label("Import Model", systemImage: "square.and.arrow.down")
                     }
                     .disabled(isImporting)
                 }
@@ -107,6 +111,12 @@ struct NewChatView: View {
         }
 
         selectedModel = models.first
+    }
+
+    private func modelSubtitle(for model: ModelReferenceEntity) -> String {
+        let size = ByteCountFormatter.string(fromByteCount: model.fileSize, countStyle: .file)
+        let profile = GenerationProfile.profile(forFileSize: model.fileSize).title
+        return "\(size) • Auto: \(profile)"
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {
@@ -167,7 +177,8 @@ struct NewChatView: View {
 
     private func createChat() {
         guard let selectedModel else { return }
-        _ = PersistenceController.shared.createChat(title: title, model: selectedModel)
+        let chat = PersistenceController.shared.createChat(title: title, model: selectedModel)
+        onCreate(chat)
         presentationMode.wrappedValue.dismiss()
     }
 }
