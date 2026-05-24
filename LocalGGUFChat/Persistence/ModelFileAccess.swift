@@ -23,6 +23,12 @@ enum ModelFileAccess {
         }
     }
 
+    static func makeBookmarkAsync(for url: URL) async throws -> Data {
+        try await Task.detached(priority: .utility) {
+            try makeBookmark(for: url)
+        }.value
+    }
+
     /// Store the selected model in app-owned storage and create a bookmark to it.
     ///
     /// The UIKit picker is opened with `asCopy: true`, so iOS usually gives the app
