@@ -13,7 +13,9 @@ struct OnboardingView: View {
     let onFinish: () -> Void
 
     @State private var page = 0
-    @State private var scanStatus: String?
+    @State private var showingImporter = false
+    @State private var isImporting = false
+    @State private var importStatus: String?
     @State private var errorText: String?
 
     private let pageCount = 6
@@ -28,7 +30,7 @@ struct OnboardingView: View {
                 TabView(selection: $page) {
                     welcomePage.tag(0)
                     modelFolderPage.tag(1)
-                    scanPage.tag(2)
+                    importPage.tag(2)
                     defaultModelPage.tag(3)
                     behaviorPage.tag(4)
                     startPage.tag(5)
@@ -41,6 +43,12 @@ struct OnboardingView: View {
         .foregroundColor(.white)
         .onAppear {
             ensureVisibleModelsFolderExists()
+        }
+        .sheet(isPresented: $showingImporter) {
+            ModelDocumentPicker(allowsMultipleSelection: true) { result in
+                showingImporter = false
+                importModels(result)
+            }
         }
     }
 
@@ -80,31 +88,44 @@ struct OnboardingView: View {
     }
 
     private var modelFolderPage: some View {
-        OnboardingPage(title: "Add a GGUF model", subtitle: "Large model files work best when placed directly in the app's visible folder.") {
+        OnboardingPage(title: "Add a GGUF model", subtitle: "Choose a .gguf model from Files, or place large files in the app's Models folder later.") {
             VStack(spacing: 14) {
-                OnboardingFeature(icon: "folder.fill", title: "Open Files", subtitle: "Go to On My iPhone → LocalGGUFChat → Models.")
-                OnboardingFeature(icon: "doc.fill", title: "Move your .gguf file", subtitle: "Put the model file in the Models folder instead of copying it through the picker.")
+                OnboardingFeature(icon: "square.and.arrow.down", title: "Import from Files", subtitle: "Pick a .gguf file and LocalLLM will add it to your model library.")
+                OnboardingFeature(icon: "folder.fill", title: "Large files still work best in Files", subtitle: "For very large models, use On My iPhone → LocalGGUFChat → Models, then scan from Settings.")
                 OnboardingFeature(icon: "lock.shield.fill", title: "Private by default", subtitle: "Your chats and models stay on this device.")
             }
         }
     }
 
-    private var scanPage: some View {
-        OnboardingPage(title: "Scan models", subtitle: "After adding a .gguf file, scan the folder so LocalLLM can use it.") {
+    private var importPage: some View {
+        OnboardingPage(title: "Import a model", subtitle: "Start by selecting a local GGUF model. You can skip this and add one later.") {
             VStack(spacing: 14) {
                 Button {
-                    scanVisibleModelsFolder()
+                    showingImporter = true
                 } label: {
-                    Label("Scan Models Folder", systemImage: "folder.badge.gearshape")
+                    Label(isImporting ? "Importing…" : "Import Model", systemImage: "square.and.arrow.down")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
                         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color.accentColor))
                         .foregroundColor(.white)
                 }
+                .disabled(isImporting)
 
-                if let scanStatus {
-                    Text(scanStatus)
+                if isImporting {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Keep the app open while the model imports.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(14)
+                    .background(GlassBackground(cornerRadius: 18))
+                }
+
+                if let importStatus {
+                    Text(importStatus)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -190,9 +211,9 @@ struct OnboardingView: View {
 
     private var modelCountCard: some View {
         VStack(spacing: 6) {
-            Text(models.isEmpty ? "No models registered" : "\(models.count) model\(models.count == 1 ? "" : "s") registered")
+            Text(models.isEmpty ? "No models imported" : "\(models.count) model\(models.count == 1 ? "" : "s") imported")
                 .font(.headline)
-            Text(models.isEmpty ? "Finish setup now, or scan after adding a model." : "You can pick a default model on the next screen.")
+            Text(models.isEmpty ? "Import now, or add a model later from the dashboard." : "You can pick a default model on the next screen.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -213,6 +234,7 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(0.10)))
+                    .disabled(isImporting)
                 }
 
                 Button(page == pageCount - 1 ? "Start" : "Next") {
@@ -226,6 +248,7 @@ struct OnboardingView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
                 .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.accentColor))
+                .disabled(isImporting)
             }
 
             Button("Skip for now") {
@@ -233,6 +256,7 @@ struct OnboardingView: View {
             }
             .font(.footnote.weight(.semibold))
             .foregroundColor(.secondary)
+            .disabled(isImporting)
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 22)
@@ -262,34 +286,58 @@ struct OnboardingView: View {
         }
     }
 
-    private func scanVisibleModelsFolder() {
+    private func importModels(_ result: Result<[URL], Error>) {
         do {
-            let urls = try ModelFileAccess.visibleModelFileURLs()
-            guard !urls.isEmpty else {
-                scanStatus = "No .gguf files found in LocalGGUFChat/Models."
-                errorText = nil
-                return
-            }
+            let urls = try result.get()
+            guard !urls.isEmpty else { return }
 
-            var count = 0
-            for url in urls {
-                let bookmark = try ModelFileAccess.makeBookmarkForVisibleModel(at: url)
-                let model = try PersistenceController.shared.upsertModel(
-                    from: bookmark,
-                    displayName: ModelFileAccess.displayName(for: url),
-                    originalPath: url.path,
-                    fileSize: ModelFileAccess.fileSize(at: url)
-                )
-
-                if generationSettings.defaultModelID.isEmpty, let id = model.id {
-                    generationSettings.defaultModelID = id.uuidString
-                }
-
-                count += 1
-            }
-
-            scanStatus = count == 1 ? "Added 1 model." : "Added \(count) models."
+            isImporting = true
+            importStatus = nil
             errorText = nil
+
+            Task {
+                do {
+                    var importedItems: [(bookmark: Data, displayName: String, originalPath: String, fileSize: Int64)] = []
+                    for url in urls {
+                        let displayName = ModelFileAccess.displayName(for: url)
+                        let originalPath = url.path
+                        let fileSize = ModelFileAccess.fileSize(at: url)
+                        let bookmark = try await ModelFileAccess.makeBookmarkAsync(for: url)
+                        importedItems.append((bookmark, displayName, originalPath, fileSize))
+                    }
+
+                    await MainActor.run {
+                        do {
+                            var count = 0
+                            for item in importedItems {
+                                let model = try PersistenceController.shared.upsertModel(
+                                    from: item.bookmark,
+                                    displayName: item.displayName,
+                                    originalPath: item.originalPath,
+                                    fileSize: item.fileSize
+                                )
+
+                                if generationSettings.defaultModelID.isEmpty, let id = model.id {
+                                    generationSettings.defaultModelID = id.uuidString
+                                }
+
+                                count += 1
+                            }
+
+                            importStatus = count == 1 ? "Imported 1 model." : "Imported \(count) models."
+                            errorText = nil
+                        } catch {
+                            errorText = error.localizedDescription
+                        }
+                        isImporting = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        errorText = error.localizedDescription
+                        isImporting = false
+                    }
+                }
+            }
         } catch {
             errorText = error.localizedDescription
         }
