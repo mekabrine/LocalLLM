@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Security
 
 enum ModelRuntimeSupport: String, CaseIterable, Identifiable, Hashable {
