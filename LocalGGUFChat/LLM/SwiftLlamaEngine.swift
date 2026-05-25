@@ -36,14 +36,10 @@ final class SwiftLlamaEngine: LLMEngine, @unchecked Sendable {
     }
 
     func generate(prompt: String, config: GenerationConfig) -> AsyncThrowingStream<String, Error> {
-        let request = LLMPromptRequest(
-            template: .alpaca,
-            systemPrompt: "",
-            userMessage: prompt,
-            history: [],
-            warnings: []
-        )
-        return generate(request: request, config: config)
+        let fileName = loadedModelPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+        let request = legacyPromptRequest(from: prompt, modelFileName: fileName)
+        let routedConfig = config.addingStopSequences(request.template.stopSequences)
+        return generate(request: request, config: routedConfig)
     }
 
     func generate(request: LLMPromptRequest, config: GenerationConfig) -> AsyncThrowingStream<String, Error> {
@@ -111,6 +107,78 @@ final class SwiftLlamaEngine: LLMEngine, @unchecked Sendable {
         case .alpaca:
             return Prompt(type: .alpaca, userMessage: alpacaUserMessage(from: request))
         }
+    }
+
+    private func legacyPromptRequest(from prompt: String, modelFileName: String?) -> LLMPromptRequest {
+        let template = ModelPromptTemplate.infer(from: modelFileName)
+        let parsed = parseLocalPrompt(prompt)
+        return LLMPromptRequest(
+            template: template,
+            systemPrompt: parsed.systemPrompt,
+            userMessage: parsed.userMessage,
+            history: parsed.history,
+            warnings: ["Using \(template.title) template inferred from the loaded model file name."]
+        )
+    }
+
+    private func parseLocalPrompt(_ prompt: String) -> (systemPrompt: String, userMessage: String, history: [LLMChatTurn]) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let system = section(named: "System", in: trimmed, before: ["Memory", "User", "Assistant"])
+        let memory = section(named: "Memory", in: trimmed, before: ["User", "Assistant"])
+        let user = section(named: "User", in: trimmed, before: ["Assistant"])
+
+        return (
+            systemPrompt: system.isEmpty ? GenerationSettings.defaultSystemMessage : system,
+            userMessage: user.isEmpty ? trimmed : user,
+            history: parseMemory(memory)
+        )
+    }
+
+    private func section(named name: String, in text: String, before possibleNextNames: [String]) -> String {
+        let marker = "\n\(name):\n"
+        let prefixed = "\n" + text
+        guard let markerRange = prefixed.range(of: marker) else { return "" }
+        let start = markerRange.upperBound
+        var end = prefixed.endIndex
+
+        for next in possibleNextNames {
+            let nextMarker = "\n\(next):\n"
+            if let range = prefixed.range(of: nextMarker, range: start..<prefixed.endIndex), range.lowerBound < end {
+                end = range.lowerBound
+            }
+        }
+
+        return String(prefixed[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func parseMemory(_ memory: String) -> [LLMChatTurn] {
+        guard !memory.isEmpty else { return [] }
+        var turns: [LLMChatTurn] = []
+        var pendingUser: String?
+
+        for line in memory.split(separator: "\n", omittingEmptySubsequences: false) {
+            let text = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.lowercased().hasPrefix("user: ") {
+                if let pendingUser {
+                    turns.append(LLMChatTurn(user: pendingUser, assistant: ""))
+                }
+                pendingUser = String(text.dropFirst(6))
+            } else if text.lowercased().hasPrefix("assistant: ") {
+                let assistant = String(text.dropFirst(11))
+                if let pendingUser {
+                    turns.append(LLMChatTurn(user: pendingUser, assistant: assistant))
+                    pendingUser = nil
+                } else {
+                    turns.append(LLMChatTurn(user: "", assistant: assistant))
+                }
+            }
+        }
+
+        if let pendingUser {
+            turns.append(LLMChatTurn(user: pendingUser, assistant: ""))
+        }
+
+        return turns
     }
 
     private func alpacaUserMessage(from request: LLMPromptRequest) -> String {
