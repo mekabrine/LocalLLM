@@ -7,13 +7,9 @@ enum UniversalPromptTemplate {
     static let stopSequences = [
         stopToken,
         "\n<LOCAL_LLM_START>",
-        "\nSystem:",
-        "\nMemory:",
-        "\nUser:",
-        "\nAssistant:",
-        "\nHuman:",
-        "\nQuestion:",
-        "\nAnswer:"
+        "<|endoftext|>",
+        "<|eot_id|>",
+        "<|im_end|>"
     ]
 
     static func prompt(system: String, memory: String, user: String) -> String {
@@ -41,7 +37,7 @@ enum UniversalPromptTemplate {
         """
         \(startToken)
         System:
-        Reply to the user in one short assistant message. Do not continue the user's text. Do not output labels.
+        Reply to the user in one short assistant message.
 
         User:
         \(clean(user))
