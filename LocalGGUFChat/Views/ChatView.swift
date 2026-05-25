@@ -80,6 +80,7 @@ struct ChatView: View {
                 PersistenceController.shared.save()
             }
             .environment(\.managedObjectContext, moc)
+            .environmentObject(generationSettings)
         }
         .sheet(isPresented: $showingChatInstructions) { ChatInstructionsView(chat: chat).environmentObject(generationSettings) }
         .sheet(isPresented: $showingFilePicker) {
@@ -498,6 +499,8 @@ struct ChatView: View {
         .padding(14)
         .background(GlassBackground(cornerRadius: 20))
         .padding(.horizontal, 14)
+        .onTapGesture { showingModelPicker = true }
+        .onLongPressGesture { showingModelPicker = true }
     }
 
     private var outdatedBanner: some View {
@@ -533,6 +536,7 @@ private struct MessageRow: View {
                 Divider()
                 Button(role: .destructive) { onDeleteFromHere() } label: { Label("Delete from Here", systemImage: "trash") }
             }
+            .onTapGesture(count: 2) { onCopy() }
     }
 }
 
