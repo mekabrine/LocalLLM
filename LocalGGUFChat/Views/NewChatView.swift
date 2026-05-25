@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreData
 import UniformTypeIdentifiers
+import UIKit
 
 struct NewChatView: View {
     @Environment(\.managedObjectContext) private var moc
@@ -306,7 +307,7 @@ private struct NewChatModelCard: View {
                 HStack(spacing: 6) {
                     badge(runtime.title, color: runtimeColor)
                     badge(info.compatibility.title, color: compatibilityColor)
-                    if isDefault { badge("Default", color: StudioTheme.success) }
+                    if isDefault { badge("Default", color: .green) }
                 }
             }
             .padding(14)
@@ -326,17 +327,17 @@ private struct NewChatModelCard: View {
 
     private var runtimeColor: Color {
         switch runtime {
-        case .runsNow: return StudioTheme.success
+        case .runsNow: return .green
         case .tooLarge, .unsupportedFormat: return StudioTheme.danger
-        case .needsImageBackend, .needsSpeechBackend, .needsVoiceBackend, .needsVisionBackend: return StudioTheme.warning
+        case .needsImageBackend, .needsSpeechBackend, .needsVoiceBackend, .needsVisionBackend: return .orange
         case .unknown: return StudioTheme.secondaryText
         }
     }
 
     private var compatibilityColor: Color {
         switch info.compatibility {
-        case .supported, .likelySupported: return StudioTheme.success
-        case .risky, .veryHighRisk: return StudioTheme.warning
+        case .supported, .likelySupported: return .green
+        case .risky, .veryHighRisk: return .orange
         case .tooLarge, .unsupportedArchitecture: return StudioTheme.danger
         case .unknown: return StudioTheme.secondaryText
         }
