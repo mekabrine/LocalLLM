@@ -3,27 +3,51 @@ import re
 import shutil
 import subprocess
 
-VERSION = '1.39'
-BUILD = '40'
+VERSION = '1.40'
+BUILD = '41'
 APP_NAME = 'LocalLLM'
 MIN_IOS = '16.1'
 PACKAGE_DIR = Path('LocalPackages/SwiftLlama')
+LLAMA_REVISION = 'b6d6c5289f1c9c677657c380591201ddb210b649'
 
 if PACKAGE_DIR.exists():
     shutil.rmtree(PACKAGE_DIR)
 PACKAGE_DIR.parent.mkdir(parents=True, exist_ok=True)
 subprocess.run(['git', 'clone', '--depth', '1', '--branch', 'main', 'https://github.com/ShenghaiWang/SwiftLlama.git', str(PACKAGE_DIR)], check=True)
 
-pkg = PACKAGE_DIR / 'Package.swift'
-package_text = pkg.read_text()
-package_text = re.sub(r'\.iOS\(\.v\d+(?:_\d+)?\)', '.iOS(.v16)', package_text)
-if 'platforms:' not in package_text:
-    package_text = package_text.replace('let package = Package(\n    name: "SwiftLlama",', 'let package = Package(\n    name: "SwiftLlama",\n    platforms: [.iOS(.v16)],')
-package_text = re.sub(r'\s*"LlamaFramework",\n', '\n', package_text)
-package_text = re.sub(r'\s*\.binaryTarget\(\s*name:\s*"LlamaFramework",.*?\)\s*,?\n', '\n', package_text, count=1, flags=re.S)
-if 'LlamaFramework' in package_text:
-    raise SystemExit('Failed to remove embedded LlamaFramework target')
-pkg.write_text(package_text)
+package_text = f'''// swift-tools-version: 6.0
+
+import PackageDescription
+
+let package = Package(
+    name: "SwiftLlama",
+    platforms: [
+        .macOS(.v15),
+        .iOS(.v16),
+        .watchOS(.v11),
+        .tvOS(.v18),
+        .visionOS(.v2)
+    ],
+    products: [
+        .library(name: "SwiftLlama", targets: ["SwiftLlama"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/ggerganov/llama.cpp.git", revision: "{LLAMA_REVISION}")
+    ],
+    targets: [
+        .target(
+            name: "SwiftLlama",
+            dependencies: [
+                .product(name: "llama", package: "llama.cpp")
+            ]
+        ),
+        .testTarget(name: "SwiftLlamaTests", dependencies: ["SwiftLlama"])
+    ]
+)
+'''
+if 'LlamaFramework' in package_text or 'binaryTarget' in package_text:
+    raise SystemExit('Generated Package.swift still contains binary framework')
+(PACKAGE_DIR / 'Package.swift').write_text(package_text)
 
 model_path = PACKAGE_DIR / 'Sources/SwiftLlama/LlamaModel.swift'
 text = model_path.read_text()
@@ -94,4 +118,4 @@ plist_text = re.sub(r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</
 plist_text = re.sub(r'(<key>CFBundleVersion</key>\s*<string>)[^<]+(</string>)', fr'\g<1>{BUILD}\2', plist_text)
 plist.write_text(plist_text)
 
-print(f'Prepared patched SwiftLlama without embedded binary target for {APP_NAME} iOS {MIN_IOS}+')
+print(f'Prepared patched SwiftLlama from source only for {APP_NAME} iOS {MIN_IOS}+')
