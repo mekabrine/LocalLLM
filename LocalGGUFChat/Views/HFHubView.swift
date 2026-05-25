@@ -30,7 +30,7 @@ struct HFHubView: View {
                 collapsedTokenSection
                 collapsedAdvancedSection
             }
-            .navigationTitle("Hugging Face")
+            .navigationTitle("HF Browser")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) { Button("Done") { presentationMode.wrappedValue.dismiss() } }
