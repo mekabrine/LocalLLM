@@ -27,8 +27,8 @@ targets:
       base:
         PRODUCT_NAME: LocalLLM
         PRODUCT_BUNDLE_IDENTIFIER: com.mekabrine.localllm
-        MARKETING_VERSION: "1.36"
-        CURRENT_PROJECT_VERSION: "37"
+        MARKETING_VERSION: "1.37"
+        CURRENT_PROJECT_VERSION: "38"
         SWIFT_VERSION: "5.0"
         IPHONEOS_DEPLOYMENT_TARGET: "16.1"
     dependencies:
