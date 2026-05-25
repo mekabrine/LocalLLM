@@ -11,6 +11,7 @@ Offline-first iOS chat app for running local `.gguf` models on device through th
 - Typing indicator while the first streamed tokens are loading
 - Editable messages with downstream messages marked out of date
 - Per-chat model selection
+- Model-aware prompt routing for popular chat model families, including Qwen/ChatML-style, Gemma, Llama 3, Mistral, Phi, and Alpaca fallback models
 - Settings page for:
   - temperature
   - top-p
@@ -23,7 +24,7 @@ Offline-first iOS chat app for running local `.gguf` models on device through th
 ## Requirements
 
 - Xcode 16.4 or newer
-- iOS 18.0 or newer
+- iOS 16.1 or newer
 - XcodeGen
 - A compatible `.gguf` model small enough for the target device memory
 
@@ -47,6 +48,8 @@ Use either:
 
 The app stores security-scoped bookmarks for imported files. Large model files remain where the user picked them from in Files.
 
+For best compatibility, keep the model family in the file name when possible, such as `qwen`, `gemma`, `llama-3`, `mistral`, `phi`, `deepseek`, or `smollm`. LocalLLM uses the loaded model file name to choose a matching prompt family before streaming.
+
 ## GitHub Actions unsigned IPA
 
 This repo includes `.github/workflows/build-unsigned-ipa.yml`.
@@ -69,4 +72,5 @@ Download the artifact from the completed workflow run. Tools such as SideStore o
 
 - The runtime integration uses [`ShenghaiWang/SwiftLlama`](https://github.com/ShenghaiWang/SwiftLlama), which wraps llama.cpp and exposes prompt streaming through `start(for:)`.
 - Temperature, top-p, max output, and stop sequences are stored in app settings. Stop sequences and max output are enforced around the stream. Sampling support depends on what the SwiftLlama wrapper exposes internally.
-- Prompt formatting is intentionally simple and model-agnostic. Some models may perform better with a model-specific chat template.
+- LocalLLM keeps its existing universal prompt builder for the UI, then the SwiftLlama engine parses that prompt and routes it to the native SwiftLlama prompt family inferred from the loaded model file name.
+- If a model still fails to load, try a smaller instruct GGUF, a lower-memory quantization, or a model family already supported by SwiftLlama's prompt encoders.
