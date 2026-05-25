@@ -3,8 +3,8 @@ import re
 import shutil
 import subprocess
 
-VERSION = '1.41'
-BUILD = '42'
+VERSION = '1.44'
+BUILD = '45'
 APP_NAME = 'LocalLLM'
 MIN_IOS = '16.1'
 PACKAGE_DIR = Path('LocalPackages/SwiftLlama')
