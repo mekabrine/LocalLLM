@@ -47,6 +47,20 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM=""
 
+      - name: Verify no prebuilt llama framework is embedded
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app bundle found."
+            exit 1
+          fi
+          if find "$APP_PATH/Frameworks" -name 'llama.framework' -print -quit 2>/dev/null | grep -q .; then
+            echo "Error: prebuilt llama.framework is embedded and can crash before app launch."
+            find "$APP_PATH/Frameworks" -name 'llama.framework' -print
+            exit 1
+          fi
+
       - name: Package unsigned IPA
         run: |
           set -euo pipefail
