@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct HFHubView: View {
     @Environment(\.presentationMode) private var presentationMode
@@ -21,13 +22,11 @@ struct HFHubView: View {
     var body: some View {
         NavigationView {
             List {
+                hubHomeSection
                 searchSection
                 recommendedSection
                 resultsSection
                 filesSection
-                collapsedDownloadsSection
-                collapsedFiltersSection
-                collapsedTokenSection
                 collapsedAdvancedSection
             }
             .navigationTitle("HF Browser")
@@ -42,8 +41,86 @@ struct HFHubView: View {
         }
     }
 
+    private var hubHomeSection: some View {
+        Section(footer: Text("Use the pages below to browse, filter, and monitor model downloads.")) {
+            NavigationLink(destination: downloadsPage) {
+                HStack {
+                    Label("Download Manager", systemImage: "arrow.down.circle.fill")
+                    Spacer()
+                    if !store.downloads.isEmpty { Text("\(store.downloads.count)").foregroundColor(.secondary) }
+                }
+            }
+            NavigationLink(destination: filtersPage) {
+                Label("Filters & Access", systemImage: "slider.horizontal.3")
+            }
+        }
+    }
+
+    private var downloadsPage: some View {
+        List {
+            Section(header: Text("Downloads"), footer: Text("Progress bars show queued, active, saved, and failed transfer state.")) {
+                if store.downloads.isEmpty {
+                    Text("No transfers yet.").foregroundColor(.secondary)
+                } else {
+                    ForEach(store.downloads) { item in
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack {
+                                Text(URL(fileURLWithPath: item.filename).lastPathComponent)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Spacer()
+                                badge(item.state.rawValue.capitalized, color: downloadColor(item.state))
+                            }
+                            ProgressView(value: downloadProgress(item.state))
+                            Text(item.detail)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    Button("Clear Finished") { store.clearFinished() }
+                }
+            }
+        }
+        .navigationTitle("Downloads")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var filtersPage: some View {
+        Form {
+            Section(header: Text("Filters")) {
+                Toggle("Hide gated/restricted repos", isOn: $hideGated)
+                Toggle("Only files LocalLLM can try now", isOn: $onlyRunnableNow)
+                Picker("Max file size", selection: $maxFileSizeGB) {
+                    Text("Any").tag(0)
+                    Text("1 GB").tag(1)
+                    Text("2 GB").tag(2)
+                    Text("4 GB").tag(4)
+                    Text("6 GB").tag(6)
+                }
+            }
+
+            Section(header: Text("Access Token"), footer: Text("Optional. Public models do not need a token.")) {
+                SecureField("hf_...", text: $token)
+                    .textInputAutocapitalization(.never)
+                    .disableAutocorrection(true)
+                Button("Save Token") {
+                    HuggingFaceTokenStore.saveToken(token)
+                    message = token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Token cleared. Public search will be used." : "Token saved."
+                }
+                Button("Use Public Only") {
+                    token = ""
+                    HuggingFaceTokenStore.deleteToken()
+                    runSearch(useDefaultIfEmpty: true)
+                }
+            }
+        }
+        .navigationTitle("Filters")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
     private var searchSection: some View {
-        Section(footer: Text("Public models work without a token. Saved files go to LocalLLM/Models and are imported as \(purpose.importTitle).")) {
+        Section(footer: Text("Saved files go to LocalLLM/Models and are imported as \(purpose.importTitle).")) {
             HStack {
                 TextField(defaultQuery, text: $query)
                     .textInputAutocapitalization(.never)
@@ -70,7 +147,7 @@ struct HFHubView: View {
     }
 
     private var resultsSection: some View {
-        Section(header: Text("Results"), footer: Text("Tap a repo to view files. Runtime labels show whether LocalLLM can try the file now.")) {
+        Section(header: Text("Results"), footer: Text("Tap a repo to view files. Long-press for quick search.")) {
             if filteredRepos.isEmpty && !isBusy {
                 Text("No matching public repositories loaded.").foregroundColor(.secondary)
             }
@@ -93,69 +170,6 @@ struct HFHubView: View {
                 if files.count > displayedFiles.count {
                     Button(showAllFiles ? "Show Recommended Files" : "Show All Files") { showAllFiles.toggle() }
                 }
-            }
-        }
-    }
-
-    private var collapsedDownloadsSection: some View {
-        Section {
-            DisclosureGroup("Downloads") {
-                if store.downloads.isEmpty {
-                    Text("No transfers yet.").foregroundColor(.secondary)
-                } else {
-                    ForEach(store.downloads) { item in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(URL(fileURLWithPath: item.filename).lastPathComponent)
-                                .font(.caption.weight(.semibold))
-                                .lineLimit(1)
-                            Text(item.detail)
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    Button("Clear Finished") { store.clearFinished() }
-                }
-            }
-        }
-    }
-
-    private var collapsedFiltersSection: some View {
-        Section {
-            DisclosureGroup("Filters") {
-                Toggle("Hide gated/private repos", isOn: $hideGated)
-                Toggle("Only files LocalLLM can try now", isOn: $onlyRunnableNow)
-                Picker("Max file size", selection: $maxFileSizeGB) {
-                    Text("Any").tag(0)
-                    Text("1 GB").tag(1)
-                    Text("2 GB").tag(2)
-                    Text("4 GB").tag(4)
-                    Text("6 GB").tag(6)
-                }
-            }
-        }
-    }
-
-    private var collapsedTokenSection: some View {
-        Section {
-            DisclosureGroup("Access Token") {
-                SecureField("hf_...", text: $token)
-                    .textInputAutocapitalization(.never)
-                    .disableAutocorrection(true)
-                HStack {
-                    Button("Save Token") {
-                        HuggingFaceTokenStore.saveToken(token)
-                        message = token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Token cleared. Public search will be used." : "Token saved."
-                    }
-                    Spacer()
-                    Button("Use Public Only") {
-                        token = ""
-                        HuggingFaceTokenStore.deleteToken()
-                        runSearch(useDefaultIfEmpty: true)
-                    }
-                }
-                Text("Optional. Public models do not need a token. Use this only for gated or private repos you already have access to.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
             }
         }
     }
@@ -232,6 +246,13 @@ struct HFHubView: View {
                 Text(repoSummary(repo)).font(.caption).foregroundColor(.secondary).lineLimit(2)
             }
         }
+        .contextMenu {
+            Button {
+                query = repo.id
+                runSearch(useDefaultIfEmpty: false)
+            } label: { Label("Search This Repo", systemImage: "magnifyingglass") }
+        }
+        .onLongPressGesture { query = repo.id; runSearch(useDefaultIfEmpty: false) }
     }
 
     private func fileRow(_ file: HuggingFaceFile) -> some View {
@@ -243,10 +264,7 @@ struct HFHubView: View {
                     Text(file.rfilename).font(.caption2).foregroundColor(.secondary).lineLimit(1)
                 }
                 Spacer()
-                Button("Download") {
-                    guard let selectedRepo else { return }
-                    store.download(repoID: selectedRepo.id, file: file, purpose: purpose, token: token)
-                }
+                Button("Download") { startDownload(file) }
             }
             HStack(spacing: 6) {
                 badge(sizeText(file.size), color: .secondary)
@@ -255,6 +273,14 @@ struct HFHubView: View {
             Text(support.detail).font(.caption).foregroundColor(.secondary)
         }
         .padding(.vertical, 5)
+        .contextMenu { Button { startDownload(file) } label: { Label("Download", systemImage: "arrow.down.circle") } }
+        .onLongPressGesture { startDownload(file) }
+    }
+
+    private func startDownload(_ file: HuggingFaceFile) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        guard let selectedRepo else { return }
+        store.download(repoID: selectedRepo.id, file: file, purpose: purpose, token: token)
     }
 
     private func badge(_ title: String, color: Color) -> some View {
@@ -340,6 +366,24 @@ struct HFHubView: View {
         case .tooLarge, .unsupportedFormat: return .red
         case .needsImageBackend, .needsSpeechBackend, .needsVoiceBackend, .needsVisionBackend: return .orange
         case .unknown: return .secondary
+        }
+    }
+
+    private func downloadProgress(_ state: HuggingFaceDownloadItem.State) -> Double {
+        switch state {
+        case .queued: return 0
+        case .downloading: return 0.35
+        case .saved: return 1
+        case .failed: return 0
+        }
+    }
+
+    private func downloadColor(_ state: HuggingFaceDownloadItem.State) -> Color {
+        switch state {
+        case .queued: return .secondary
+        case .downloading: return .accentColor
+        case .saved: return .green
+        case .failed: return .red
         }
     }
 }
