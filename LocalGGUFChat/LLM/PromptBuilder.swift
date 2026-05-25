@@ -19,12 +19,7 @@ enum PromptBuilder {
         systemMessage: String,
         effectiveSettings: EffectiveGenerationSettings
     ) -> String {
-        buildRequest(
-            messages: messages,
-            systemMessage: systemMessage,
-            effectiveSettings: effectiveSettings,
-            modelFileName: nil
-        ).previewText
+        buildResult(messages: messages, systemMessage: systemMessage, effectiveSettings: effectiveSettings).prompt
     }
 
     static func buildRequest(
@@ -52,13 +47,17 @@ enum PromptBuilder {
         systemMessage: String,
         effectiveSettings: EffectiveGenerationSettings
     ) -> (prompt: String, warnings: [String]) {
-        let request = buildRequest(
-            messages: messages,
+        let cleanedMessages = messages.compactMap { message -> PromptMessage? in
+            let text = clean(message.text)
+            guard !text.isEmpty else { return nil }
+            return PromptMessage(role: message.role, text: text)
+        }
+
+        return legacyPromptResult(
+            cleanedMessages: cleanedMessages,
             systemMessage: systemMessage,
-            effectiveSettings: effectiveSettings,
-            modelFileName: nil
+            effectiveSettings: effectiveSettings
         )
-        return (request.previewText, request.warnings)
     }
 
     @MainActor
@@ -71,6 +70,21 @@ enum PromptBuilder {
         let cleanedMessages = [PromptMessage(role: .user, text: clean(sampleUserMessage))]
         return PromptStyle.allCases.map { style in
             let effective = settings.previewSettings(profile: profile, promptStyle: style)
+            if style == .raw {
+                let result = legacyPromptResult(
+                    cleanedMessages: cleanedMessages,
+                    systemMessage: systemMessage,
+                    effectiveSettings: effective
+                )
+                return PromptPreview(
+                    id: style.rawValue,
+                    style: style,
+                    resolvedStyle: effective.promptStyle,
+                    prompt: result.prompt,
+                    warnings: result.warnings
+                )
+            }
+
             let request = buildRequest(
                 cleanedMessages: cleanedMessages,
                 systemMessage: systemMessage,
@@ -88,7 +102,7 @@ enum PromptBuilder {
     }
 
     static func tinyAssistantRetryPrompt(userText: String) -> String {
-        tinyAssistantRetryRequest(userText: userText, modelFileName: nil).previewText
+        UniversalPromptTemplate.repairPrompt(user: clean(userText))
     }
 
     static func tinyAssistantRetryRequest(userText: String, modelFileName: String?) -> LLMPromptRequest {
@@ -100,6 +114,28 @@ enum PromptBuilder {
             history: [],
             warnings: ["Retry used a short repair prompt with the \(template.title) template."]
         )
+    }
+
+    private static func legacyPromptResult(
+        cleanedMessages: [PromptMessage],
+        systemMessage: String,
+        effectiveSettings: EffectiveGenerationSettings
+    ) -> (prompt: String, warnings: [String]) {
+        let latestUserText = cleanedMessages.last(where: { $0.role == .user })?.text ?? ""
+        var warnings: [String] = []
+
+        if effectiveSettings.promptStyle == .raw {
+            warnings.append("Raw Debug sends exactly the latest user text and may cause completion-style models to continue the user's message.")
+            return (trim(latestUserText, to: effectiveSettings.promptCharacterLimit), warnings)
+        }
+
+        let memory = memoryContext(from: cleanedMessages, limit: effectiveSettings.historyLimit)
+        let prompt = UniversalPromptTemplate.prompt(system: systemMessage, memory: memory, user: latestUserText)
+        let trimmed = trim(prompt, to: effectiveSettings.promptCharacterLimit)
+        if trimmed.count < prompt.count {
+            warnings.append("Prompt was trimmed to \(effectiveSettings.promptCharacterLimit) characters.")
+        }
+        return (trimmed, warnings)
     }
 
     private static func buildRequest(
@@ -149,6 +185,20 @@ enum PromptBuilder {
             history: clippedHistory,
             warnings: warnings
         )
+    }
+
+    private static func memoryContext(from messages: [PromptMessage], limit: Int) -> String {
+        guard limit > 1, messages.count > 1 else { return "" }
+        let contextMessages = messages.dropLast().suffix(max(0, limit - 1))
+        return contextMessages.map { message in
+            let clipped = clip(message.text, to: 280)
+            switch message.role {
+            case .user:
+                return "User: \(clipped)"
+            case .assistant:
+                return "Assistant: \(clipped)"
+            }
+        }.joined(separator: "\n")
     }
 
     private static func chatHistory(from messages: [PromptMessage], limit: Int) -> [LLMChatTurn] {
