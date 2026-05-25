@@ -1,4 +1,4 @@
-name: LocalGGUFChat
+name: LocalLLM
 options:
   bundleIdPrefix: com.mekabrine
   deploymentTarget:
@@ -26,8 +26,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mekabrine.localllm
-        MARKETING_VERSION: "1.23"
-        CURRENT_PROJECT_VERSION: "24"
+        MARKETING_VERSION: "1.26"
+        CURRENT_PROJECT_VERSION: "27"
         SWIFT_VERSION: "5.0"
     dependencies:
       - package: SwiftLlama
