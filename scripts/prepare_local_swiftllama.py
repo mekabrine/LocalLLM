@@ -3,8 +3,8 @@ import re
 import shutil
 import subprocess
 
-VERSION = '1.36'
-BUILD = '37'
+VERSION = '1.37'
+BUILD = '38'
 APP_NAME = 'LocalLLM'
 MIN_IOS = '16.1'
 PACKAGE_DIR = Path('LocalPackages/SwiftLlama')
@@ -45,24 +45,42 @@ if 'private enum LlamaBackend' not in text:
         'import Foundation\nimport llama\n\nclass LlamaModel {',
         'import Foundation\nimport llama\n\nprivate enum LlamaBackend {\n    static let once: Void = { llama_backend_init() }()\n}\n\nclass LlamaModel {'
     )
+    text = text.replace(
+        'import Foundation import llama class LlamaModel {',
+        'import Foundation\nimport llama\n\nprivate enum LlamaBackend {\n    static let once: Void = { llama_backend_init() }()\n}\n\nclass LlamaModel {'
+    )
 
-if 'private let vocab: OpaquePointer' not in text:
+if 'private let vocab:' not in text:
     text, count = re.subn(
-        r'(    private let model: OpaquePointer\n)',
-        r'\1    private let vocab: OpaquePointer\n',
+        r'(private let model:\s*[^\s]+)\s+(private let configuration:)',
+        r'\1\n    private let vocab: OpaquePointer\n    \2',
         text,
         count=1
     )
+    if count != 1:
+        text, count = re.subn(
+            r'(private let model:\s*[^\n]+\n)',
+            r'\1    private let vocab: OpaquePointer\n',
+            text,
+            count=1
+        )
     if count != 1:
         raise SystemExit('Failed to add SwiftLlama vocab property')
 
 if 'self.vocab = llama_model_get_vocab(model)' not in text:
     text, count = re.subn(
-        r'(        self\.model = model\n)',
-        r'\1        self.vocab = llama_model_get_vocab(model)\n',
+        r'(self\.model\s*=\s*model)\s+(guard let context)',
+        r'\1\n        self.vocab = llama_model_get_vocab(model)\n        \2',
         text,
         count=1
     )
+    if count != 1:
+        text, count = re.subn(
+            r'(self\.model\s*=\s*model\n)',
+            r'\1        self.vocab = llama_model_get_vocab(model)\n',
+            text,
+            count=1
+        )
     if count != 1:
         raise SystemExit('Failed to initialize SwiftLlama vocab pointer')
 
@@ -92,15 +110,15 @@ safe_tokenize = '''    private func tokenize(text: String, addBos: Bool) throws 
     }
 '''
 text, count = re.subn(
-    r'    private func tokenize\(text: String, addBos: Bool\) (?:throws )?-> \[Token\] \{.*?    \}\n\n    func clear\(\)',
-    safe_tokenize + '\n    func clear()',
+    r'\s*private func tokenize\(text:\s*String,\s*addBos:\s*Bool\)\s*(?:throws\s*)?->\s*\[Token\]\s*\{.*?\}\s*func clear\(\)',
+    '\n' + safe_tokenize + '\n    func clear()',
     text,
     count=1,
     flags=re.S
 )
 if count != 1:
     raise SystemExit('Failed to patch SwiftLlama tokenizer')
-if 'private let vocab: OpaquePointer' not in text or 'llama_model_get_vocab(model)' not in text or 'llama_tokenize(vocab,' not in text:
+if 'private let vocab:' not in text or 'llama_model_get_vocab(model)' not in text or 'llama_tokenize(vocab,' not in text:
     raise SystemExit('Generated SwiftLlama patch did not apply vocab-backed tokenizer')
 model_path.write_text(text)
 
@@ -114,6 +132,14 @@ prompt_text, count = re.subn(
     count=1,
     flags=re.S
 )
+if count != 1:
+    prompt_text, count = re.subn(
+        r'private func encodeAlpacaPrompt\(\) -> String \{.*?\}\s*private func encodeChatMLPrompt',
+        raw_alpaca + '\n    private func encodeChatMLPrompt',
+        prompt_text,
+        count=1,
+        flags=re.S
+    )
 if count != 1:
     raise SystemExit('Failed to patch SwiftLlama Alpaca prompt wrapper')
 prompt_path.write_text(prompt_text)
