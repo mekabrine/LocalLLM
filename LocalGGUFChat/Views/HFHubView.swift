@@ -14,7 +14,7 @@ struct HFHubView: View {
     @State private var isBusy = false
     @State private var message: String?
     @State private var hideGated = true
-    @State private var onlyRunnableNow = true
+    @State private var onlyRunnableNow = false
     @State private var maxFileSizeGB = 6
     @State private var showAllFiles = false
 
@@ -35,7 +35,10 @@ struct HFHubView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) { Button("Done") { presentationMode.wrappedValue.dismiss() } }
             }
-            .onAppear { if repos.isEmpty { runSearch(useDefaultIfEmpty: true) } }
+            .onAppear {
+                if purpose == .text || purpose == .fileHelper { onlyRunnableNow = true }
+                if repos.isEmpty { runSearch(useDefaultIfEmpty: true) }
+            }
         }
     }
 
