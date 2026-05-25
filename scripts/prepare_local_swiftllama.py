@@ -3,8 +3,8 @@ import re
 import shutil
 import subprocess
 
-VERSION = '1.34'
-BUILD = '35'
+VERSION = '1.35'
+BUILD = '36'
 APP_NAME = 'LocalLLM'
 MIN_IOS = '16.1'
 PACKAGE_DIR = Path('LocalPackages/SwiftLlama')
@@ -18,9 +18,19 @@ subprocess.run([
     str(PACKAGE_DIR)
 ], check=True)
 
+package_path = PACKAGE_DIR / 'Package.swift'
+package_text = package_path.read_text()
+if 'platforms:' in package_text:
+    package_text = re.sub(r'\.iOS\(\.v\d+(?:_\d+)?\)', '.iOS(.v16)', package_text)
+else:
+    package_text = package_text.replace(
+        'let package = Package(\n    name: "SwiftLlama",',
+        'let package = Package(\n    name: "SwiftLlama",\n    platforms: [.iOS(.v16)],'
+    )
+package_path.write_text(package_text)
+
 model_path = PACKAGE_DIR / 'Sources/SwiftLlama/LlamaModel.swift'
 text = model_path.read_text()
-
 text = text.replace('        llama_backend_init()\n', '        _ = LlamaBackend.once\n')
 text = text.replace('        llama_backend_free()\n', '')
 text = text.replace('tokens = tokenize(text: prompt.prompt, addBos: true)', 'tokens = try tokenize(text: prompt.prompt, addBos: true)')
@@ -28,13 +38,11 @@ text = text.replace(
     '        tokens = try tokenize(text: prompt.prompt, addBos: true)\n\n        batch.clear()\n',
     '        tokens = try tokenize(text: prompt.prompt, addBos: true)\n        guard !tokens.isEmpty else { throw SwiftLlamaError.others("Prompt tokenization produced no tokens") }\n\n        batch.clear()\n'
 )
-
 if 'private enum LlamaBackend' not in text:
     text = text.replace(
         'import Foundation\nimport llama\n\nclass LlamaModel {',
         'import Foundation\nimport llama\n\nprivate enum LlamaBackend {\n    static let once: Void = { llama_backend_init() }()\n}\n\nclass LlamaModel {'
     )
-
 safe_tokenize = '''    private func tokenize(text: String, addBos: Bool) throws -> [Token] {
         let byteCount = Int32(text.utf8.count)
         let needed = llama_tokenize(model, text, byteCount, nil, 0, addBos, false)
@@ -89,7 +97,6 @@ project_text = project_text.replace(
 )
 project_text = re.sub(r'iOS: "[^"]+"', f'iOS: "{MIN_IOS}"', project_text)
 project_text = re.sub(r'deploymentTarget: "[^"]+"', f'deploymentTarget: "{MIN_IOS}"', project_text)
-project_text = re.sub(r'deploymentTarget:\n    iOS: "[^"]+"', f'deploymentTarget:\n    iOS: "{MIN_IOS}"', project_text)
 if 'PRODUCT_NAME:' not in project_text:
     project_text = project_text.replace('        PRODUCT_BUNDLE_IDENTIFIER:', f'        PRODUCT_NAME: {APP_NAME}\n        PRODUCT_BUNDLE_IDENTIFIER:')
 else:
@@ -110,5 +117,4 @@ if plist.exists():
     plist_text = re.sub(r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)', fr'\g<1>{VERSION}\2', plist_text)
     plist_text = re.sub(r'(<key>CFBundleVersion</key>\s*<string>)[^<]+(</string>)', fr'\g<1>{BUILD}\2', plist_text)
     plist.write_text(plist_text)
-
 print(f'Prepared patched SwiftLlama package and {APP_NAME} metadata for iOS {MIN_IOS}+')
