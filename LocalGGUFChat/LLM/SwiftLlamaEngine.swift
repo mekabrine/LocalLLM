@@ -36,10 +36,21 @@ final class SwiftLlamaEngine: LLMEngine, @unchecked Sendable {
     }
 
     func generate(prompt: String, config: GenerationConfig) -> AsyncThrowingStream<String, Error> {
+        let request = LLMPromptRequest(
+            template: .alpaca,
+            systemPrompt: "",
+            userMessage: prompt,
+            history: [],
+            warnings: []
+        )
+        return generate(request: request, config: config)
+    }
+
+    func generate(request: LLMPromptRequest, config: GenerationConfig) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task.detached(priority: .userInitiated) {
                 do {
-                    try self.ensureLoadedForGeneration(config: config)
+                    try self.ensureLoadedForGeneration(config: config, template: request.template)
 
                     guard let swiftLlama = self.swiftLlama, self.isLoaded else {
                         continuation.finish(
@@ -52,7 +63,7 @@ final class SwiftLlamaEngine: LLMEngine, @unchecked Sendable {
                         return
                     }
 
-                    let nativePrompt = Prompt(type: .alpaca, userMessage: prompt)
+                    let nativePrompt = self.nativePrompt(from: request)
                     var approximateTokens = 0
 
                     for try await token in await swiftLlama.start(for: nativePrompt) {
@@ -83,7 +94,60 @@ final class SwiftLlamaEngine: LLMEngine, @unchecked Sendable {
         }
     }
 
-    private func ensureLoadedForGeneration(config: GenerationConfig) throws {
+    private func nativePrompt(from request: LLMPromptRequest) -> Prompt {
+        let history = request.history.map { Chat(user: $0.user, bot: $0.assistant) }
+
+        switch request.template {
+        case .chatML:
+            return Prompt(type: .chatML, systemPrompt: request.systemPrompt, userMessage: request.userMessage, history: history)
+        case .llama3:
+            return Prompt(type: .llama3, systemPrompt: request.systemPrompt, userMessage: request.userMessage, history: history)
+        case .mistral:
+            return Prompt(type: .mistral, systemPrompt: request.systemPrompt, userMessage: mistralUserMessage(from: request), history: history)
+        case .phi:
+            return Prompt(type: .phi, systemPrompt: request.systemPrompt, userMessage: request.userMessage, history: history)
+        case .gemma:
+            return Prompt(type: .gemma, systemPrompt: request.systemPrompt, userMessage: request.userMessage, history: history)
+        case .alpaca:
+            return Prompt(type: .alpaca, userMessage: alpacaUserMessage(from: request))
+        }
+    }
+
+    private func alpacaUserMessage(from request: LLMPromptRequest) -> String {
+        var sections: [String] = []
+        let system = request.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !system.isEmpty {
+            sections.append("System:\n\(system)")
+        }
+
+        if !request.history.isEmpty {
+            let memory = request.history.map { turn in
+                [
+                    turn.user.isEmpty ? nil : "User: \(turn.user)",
+                    turn.assistant.isEmpty ? nil : "Assistant: \(turn.assistant)"
+                ]
+                .compactMap { $0 }
+                .joined(separator: "\n")
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+
+            if !memory.isEmpty {
+                sections.append("Conversation so far:\n\(memory)")
+            }
+        }
+
+        sections.append("User:\n\(request.userMessage)\n\nAssistant:")
+        return sections.joined(separator: "\n\n")
+    }
+
+    private func mistralUserMessage(from request: LLMPromptRequest) -> String {
+        let system = request.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !system.isEmpty else { return request.userMessage }
+        return "\(system)\n\n\(request.userMessage)"
+    }
+
+    private func ensureLoadedForGeneration(config: GenerationConfig, template: ModelPromptTemplate = .alpaca) throws {
         guard let loadedModelPath else {
             throw NSError(
                 domain: "SwiftLlamaEngine",
@@ -92,7 +156,7 @@ final class SwiftLlamaEngine: LLMEngine, @unchecked Sendable {
             )
         }
 
-        let key = configurationKey(for: config)
+        let key = configurationKey(for: config, template: template)
         if swiftLlama != nil, loadedConfigurationKey == key {
             return
         }
@@ -114,8 +178,8 @@ final class SwiftLlamaEngine: LLMEngine, @unchecked Sendable {
         isLoaded = true
     }
 
-    private func configurationKey(for config: GenerationConfig) -> String {
-        "\(config.temperature)|\(config.topP)|\(config.maxTokens)|\(config.stop.joined(separator: "\u{1f}"))"
+    private func configurationKey(for config: GenerationConfig, template: ModelPromptTemplate) -> String {
+        "\(template.rawValue)|\(config.temperature)|\(config.topP)|\(config.maxTokens)|\(config.stop.joined(separator: "\u{1f}"))"
     }
 
     private static func approximateTokenCount(in text: String) -> Int {
