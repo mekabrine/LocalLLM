@@ -3,8 +3,8 @@ import re
 import shutil
 import subprocess
 
-VERSION = '1.35'
-BUILD = '36'
+VERSION = '1.36'
+BUILD = '37'
 APP_NAME = 'LocalLLM'
 MIN_IOS = '16.1'
 PACKAGE_DIR = Path('LocalPackages/SwiftLlama')
@@ -31,6 +31,7 @@ package_path.write_text(package_text)
 
 model_path = PACKAGE_DIR / 'Sources/SwiftLlama/LlamaModel.swift'
 text = model_path.read_text()
+
 text = text.replace('        llama_backend_init()\n', '        _ = LlamaBackend.once\n')
 text = text.replace('        llama_backend_free()\n', '')
 text = text.replace('tokens = tokenize(text: prompt.prompt, addBos: true)', 'tokens = try tokenize(text: prompt.prompt, addBos: true)')
@@ -38,32 +39,60 @@ text = text.replace(
     '        tokens = try tokenize(text: prompt.prompt, addBos: true)\n\n        batch.clear()\n',
     '        tokens = try tokenize(text: prompt.prompt, addBos: true)\n        guard !tokens.isEmpty else { throw SwiftLlamaError.others("Prompt tokenization produced no tokens") }\n\n        batch.clear()\n'
 )
+
 if 'private enum LlamaBackend' not in text:
     text = text.replace(
         'import Foundation\nimport llama\n\nclass LlamaModel {',
         'import Foundation\nimport llama\n\nprivate enum LlamaBackend {\n    static let once: Void = { llama_backend_init() }()\n}\n\nclass LlamaModel {'
     )
+
+if 'private let vocab: OpaquePointer' not in text:
+    text, count = re.subn(
+        r'(    private let model: OpaquePointer\n)',
+        r'\1    private let vocab: OpaquePointer\n',
+        text,
+        count=1
+    )
+    if count != 1:
+        raise SystemExit('Failed to add SwiftLlama vocab property')
+
+if 'self.vocab = llama_model_get_vocab(model)' not in text:
+    text, count = re.subn(
+        r'(        self\.model = model\n)',
+        r'\1        self.vocab = llama_model_get_vocab(model)\n',
+        text,
+        count=1
+    )
+    if count != 1:
+        raise SystemExit('Failed to initialize SwiftLlama vocab pointer')
+
+text = text.replace('llama_token_is_eog(model,', 'llama_token_is_eog(vocab,')
+text = text.replace('llama_token_to_piece(model,', 'llama_token_to_piece(vocab,')
+text = text.replace('llama_tokenize(model,', 'llama_tokenize(vocab,')
+
 safe_tokenize = '''    private func tokenize(text: String, addBos: Bool) throws -> [Token] {
         let byteCount = Int32(text.utf8.count)
-        let needed = llama_tokenize(model, text, byteCount, nil, 0, addBos, false)
-        var capacity = max(needed < 0 ? Int(-needed) : Int(needed), 8)
-        var tokens = [Token](repeating: 0, count: capacity)
-        var count = tokens.withUnsafeMutableBufferPointer { buffer in
-            llama_tokenize(model, text, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
-        }
-        if count < 0 {
-            capacity = max(Int(-count), capacity * 2, 8)
-            tokens = [Token](repeating: 0, count: capacity)
-            count = tokens.withUnsafeMutableBufferPointer { buffer in
-                llama_tokenize(model, text, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
+        return try text.withCString { cText in
+            let needed = llama_tokenize(vocab, cText, byteCount, nil, 0, addBos, false)
+            var capacity = max(needed < 0 ? Int(-needed) : Int(needed), 8)
+            var tokens = [Token](repeating: 0, count: capacity)
+            var count = tokens.withUnsafeMutableBufferPointer { buffer in
+                llama_tokenize(vocab, cText, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
             }
+            if count < 0 {
+                capacity = max(Int(-count), capacity * 2, 8)
+                tokens = [Token](repeating: 0, count: capacity)
+                count = tokens.withUnsafeMutableBufferPointer { buffer in
+                    llama_tokenize(vocab, cText, byteCount, buffer.baseAddress, Int32(buffer.count), addBos, false)
+                }
+            }
+            guard count > 0 else { throw SwiftLlamaError.others("Prompt tokenization failed") }
+            return Array(tokens.prefix(Int(count)))
         }
-        guard count > 0 else { throw SwiftLlamaError.others("Prompt tokenization failed") }
-        return Array(tokens.prefix(Int(count)))
     }
 '''
 text, count = re.subn(
-    r'    private func tokenize\(text: String, addBos: Bool\) -> \[Token\] \{.*?    \}\n\n    func clear\(\)',
+    r'    private func tokenize\(text: String, addBos: Bool\) (?:throws )?-> \[Token\] \{.*?    \}\n\n    func clear\(\)',
     safe_tokenize + '\n    func clear()',
     text,
     count=1,
@@ -71,8 +100,8 @@ text, count = re.subn(
 )
 if count != 1:
     raise SystemExit('Failed to patch SwiftLlama tokenizer')
-if 'llama_model_get_vocab' in text or 'private let vocab' in text:
-    raise SystemExit('Generated SwiftLlama patch uses unavailable vocab API')
+if 'private let vocab: OpaquePointer' not in text or 'llama_model_get_vocab(model)' not in text or 'llama_tokenize(vocab,' not in text:
+    raise SystemExit('Generated SwiftLlama patch did not apply vocab-backed tokenizer')
 model_path.write_text(text)
 
 prompt_path = PACKAGE_DIR / 'Sources/SwiftLlama/Models/Prompt.swift'
@@ -117,4 +146,5 @@ if plist.exists():
     plist_text = re.sub(r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)', fr'\g<1>{VERSION}\2', plist_text)
     plist_text = re.sub(r'(<key>CFBundleVersion</key>\s*<string>)[^<]+(</string>)', fr'\g<1>{BUILD}\2', plist_text)
     plist.write_text(plist_text)
+
 print(f'Prepared patched SwiftLlama package and {APP_NAME} metadata for iOS {MIN_IOS}+')
