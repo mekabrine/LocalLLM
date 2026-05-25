@@ -3,8 +3,10 @@ import re
 import shutil
 import subprocess
 
-VERSION = '1.28'
-BUILD = '29'
+VERSION = '1.33'
+BUILD = '34'
+APP_NAME = 'LocalLLM'
+MIN_IOS = '16.1'
 PACKAGE_DIR = Path('LocalPackages/SwiftLlama')
 
 if PACKAGE_DIR.exists():
@@ -85,6 +87,17 @@ project_text = project_text.replace(
     '  SwiftLlama:\n    url: https://github.com/ShenghaiWang/SwiftLlama.git\n    from: 0.4.0',
     '  SwiftLlama:\n    path: LocalPackages/SwiftLlama'
 )
+project_text = re.sub(r'iOS: "[^"]+"', f'iOS: "{MIN_IOS}"', project_text)
+project_text = re.sub(r'deploymentTarget: "[^"]+"', f'deploymentTarget: "{MIN_IOS}"', project_text)
+project_text = re.sub(r'deploymentTarget:\n    iOS: "[^"]+"', f'deploymentTarget:\n    iOS: "{MIN_IOS}"', project_text)
+if 'PRODUCT_NAME:' not in project_text:
+    project_text = project_text.replace('        PRODUCT_BUNDLE_IDENTIFIER:', f'        PRODUCT_NAME: {APP_NAME}\n        PRODUCT_BUNDLE_IDENTIFIER:')
+else:
+    project_text = re.sub(r'PRODUCT_NAME: .*', f'PRODUCT_NAME: {APP_NAME}', project_text)
+if 'IPHONEOS_DEPLOYMENT_TARGET:' not in project_text:
+    project_text = project_text.replace('        SWIFT_VERSION:', f'        IPHONEOS_DEPLOYMENT_TARGET: "{MIN_IOS}"\n        SWIFT_VERSION:')
+else:
+    project_text = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET: "[^"]+"', f'IPHONEOS_DEPLOYMENT_TARGET: "{MIN_IOS}"', project_text)
 project_text = re.sub(r'MARKETING_VERSION: "[^"]+"', f'MARKETING_VERSION: "{VERSION}"', project_text)
 project_text = re.sub(r'CURRENT_PROJECT_VERSION: "[^"]+"', f'CURRENT_PROJECT_VERSION: "{BUILD}"', project_text)
 project.write_text(project_text)
@@ -92,9 +105,10 @@ project.write_text(project_text)
 plist = Path('LocalGGUFChat/Resources/Info.plist')
 if plist.exists():
     plist_text = plist.read_text()
-    plist_text = re.sub(r'(<key>CFBundleDisplayName</key>\s*<string>)[^<]+(</string>)', r'\g<1>LocalLLM\2', plist_text)
+    plist_text = re.sub(r'(<key>CFBundleDisplayName</key>\s*<string>)[^<]+(</string>)', fr'\g<1>{APP_NAME}\2', plist_text)
+    plist_text = re.sub(r'(<key>CFBundleName</key>\s*<string>)[^<]+(</string>)', fr'\g<1>{APP_NAME}\2', plist_text)
     plist_text = re.sub(r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)', fr'\g<1>{VERSION}\2', plist_text)
     plist_text = re.sub(r'(<key>CFBundleVersion</key>\s*<string>)[^<]+(</string>)', fr'\g<1>{BUILD}\2', plist_text)
     plist.write_text(plist_text)
 
-print('Prepared patched local SwiftLlama package')
+print(f'Prepared patched SwiftLlama package and {APP_NAME} metadata for iOS {MIN_IOS}+')
